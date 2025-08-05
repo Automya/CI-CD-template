@@ -1,0 +1,13 @@
+.docker_login: &docker_login
+  - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+
+build_image:
+  image: docker:latest
+  stage: build
+  tags:
+    - build
+  before_script:
+    - *docker_login
+  script:
+    - docker build --network=host -t "$IMAGE_NAME" .
+    - docker push "$IMAGE_NAME"
