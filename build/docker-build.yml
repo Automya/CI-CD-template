@@ -10,6 +10,7 @@
   tags:
     - build
   before_script:
+    - apt-get update -qq && apt-get install -y -qq apt-transport-https ca-certificates curl gnupg docker-ce-cli
     - *docker_login
   script:
     - docker build --network=host -t "$IMAGE_NAME" .
