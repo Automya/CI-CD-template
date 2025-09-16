@@ -5,7 +5,7 @@
     - gcloud auth configure-docker europe-west1-docker.pkg.dev
 .build_image:
   #image: docker:latest
-  image: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+  image: google/cloud-sdk:latest
   stage: build
   tags:
     - build
