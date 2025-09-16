@@ -4,7 +4,8 @@
     - gcloud auth activate-service-account --key-file=gcloud-key.json
     - gcloud auth configure-docker europe-west1-docker.pkg.dev
 .build_image:
-  image: docker:latest
+  #image: docker:latest
+  image: gcr.io/google.com/cloudsdktool/cloud-sdk:latest
   stage: build
   tags:
     - build
