@@ -2,7 +2,7 @@
   #- echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
     - echo "$GCP_SERVICE_KEY_JSON" > gcloud-key.json
     - gcloud auth activate-service-account --key-file=gcloud-key.json
-    - gcloud auth configure-docker us-central1-docker.pkg.dev
+    - gcloud auth configure-docker europe-west1-docker.pkg.dev
 .build_image:
   image: docker:latest
   stage: build
