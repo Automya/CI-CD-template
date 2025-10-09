@@ -1,5 +1,5 @@
 .docker_login: &docker_login
-    - echo "$GCP_SERVICE_KEY_JSON" > gcloud-key.json
+    - echo "$GCP_SERVICE_KEY_AUTOMYA" > gcloud-key.json
     - gcloud auth activate-service-account --key-file=gcloud-key.json
     - gcloud auth configure-docker europe-west1-docker.pkg.dev
 .build_image:
