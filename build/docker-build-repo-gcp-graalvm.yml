@@ -18,5 +18,5 @@
     - apt-get install -y -qq docker-ce-cli
     - *docker_login
   script:
-    - docker build --network=host --build-arg MAVEN_USERNAME=$MAVEN_USERNAME --build-arg MAVEN_PASSWORD=$MAVEN_PASSWORD -t "$IMAGE_NAME" -f Dockerfile.graalvm .
+    - docker build --network=host -t "$IMAGE_NAME" -f Dockerfile .
     - docker push "$IMAGE_NAME"
