@@ -54,9 +54,9 @@ test_gradle:
 # Análisis de dependencias con DependencyCheck
 dependency_check:
   extends: .gradle_test_base
-  stage: coverage
+  stage: report
   needs:
-    - validate_tests_passed
+    - test_gradle
   script:
     - gradle dependencyCheckAnalyze
   artifacts:
