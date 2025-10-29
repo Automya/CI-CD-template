@@ -49,7 +49,7 @@ test_gradle:
       - "**/build/test-results/"
       - "**/build/reports/jacoco/"
     expire_in: 1 week
-    coverage: "/Total.*?([0-9]{1,3})%/"
+  coverage: "/Total.*?([0-9]{1,3})%/"
 
 # Análisis de dependencias con DependencyCheck
 dependency_check:
