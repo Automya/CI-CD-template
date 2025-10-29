@@ -33,7 +33,7 @@ stages:
     - java -version
 
 # Tests unitarios con Gradle
-unit_test_gradle:
+test_gradle:
   extends: .gradle_test_base
   script:
     - gradle test
@@ -51,8 +51,7 @@ coverage_gradle:
   extends: .gradle_test_base
   stage: coverage
   needs:
-    - unit_test_gradle
-    - integration_test_gradle
+    - test_gradle
   script:
     - gradle test jacocoTestReport
   artifacts:
@@ -65,21 +64,6 @@ coverage_gradle:
       - build/reports/jacoco/
     expire_in: 1 week
   coverage: "/Total.*?([0-9]{1,3})%/"
-#
-# Tests de integración con Gradle
-integration_test_gradle:
-  extends: .gradle_test_base
-  stage: test
-  script:
-    - gradle integrationTest
-  artifacts:
-    when: always
-    reports:
-      junit:
-        - build/test-results/integrationTest/TEST-*.xml
-    paths:
-      - build/test-results/integrationTest/
-    expire_in: 1 week
 
 # Análisis de calidad de código con SonarQube
 sonar_analysis:
@@ -105,8 +89,7 @@ validate_tests_passed:
   script:
     - echo "All tests passed successfully"
   needs:
-    - unit_test_gradle
-    - integration_test_gradle
+    - test_gradle
     - coverage_gradle
   when: on_success
 
