@@ -55,7 +55,7 @@ dependency_check:
   needs:
     - test_gradle
   script:
-    - gradle dependencyCheckAnalyze
+    - gradle -DNVD_API_KEY="$NVD_API_KEY" dependencyCheckAnalyze
   artifacts:
     when: always
     paths:
