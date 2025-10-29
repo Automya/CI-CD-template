@@ -83,11 +83,11 @@ sonar_analysis:
 
 # Job de validación: solo se ejecuta si todos los tests pasan
 # Este job debe ser usado como dependencia en los jobs de build
-validate_tests_passed:
+analysis_and_tests_passed:
   stage: report
   image: alpine:latest
   script:
-    - echo "All tests passed successfully"
+    - echo "All analysis and tests passed successfully"
   needs:
     - test_gradle
     - dependency_check
