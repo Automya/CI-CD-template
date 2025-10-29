@@ -50,6 +50,9 @@ unit_test_gradle:
 coverage_gradle:
   extends: .gradle_test_base
   stage: coverage
+  needs:
+    - unit_test_gradle
+    - integration_test_gradle
   script:
     - gradle test jacocoTestReport
   artifacts:
@@ -82,6 +85,10 @@ integration_test_gradle:
 sonar_analysis:
   extends: .gradle_test_base
   stage: report
+  needs:
+    - unit_test_gradle
+    - integration_test_gradle
+    - coverage_gradle
   script:
     - gradle sonarqube
       -Dsonar.projectKey=$CI_PROJECT_NAME
