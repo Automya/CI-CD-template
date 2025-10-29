@@ -79,8 +79,10 @@ sonar_analysis:
   needs:
     - validate_tests_passed
   script:
-    - gradle dependencyCheckAnalyze
     - gradle sonarqube
+      -Dsonar.dependencyCheck.nvd.apiKey=$NVD_API_KEY
+      -Dsonar.dependencyCheck.jsonReportPath=**/build/reports/dependency-check/dependency-check-report.json
+      -Dsonar.dependencyCheck.htmlReportPath=**/build/reports/dependency-check/dependency-check-report.html
   allow_failure: true
   only:
     - main
