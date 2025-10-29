@@ -23,7 +23,7 @@ stages:
 
 # Job base para tests Gradle
 .gradle_test_base:
-  image: gradle:7.6-jdk11
+  image: gradle:7.6-jdk17
   stage: test
   tags:
     - test
@@ -98,6 +98,19 @@ sonar_analysis:
     - main
     - develop
     - merge_requests
+
+# Job de validación: solo se ejecuta si todos los tests pasan
+# Este job debe ser usado como dependencia en los jobs de build
+validate_tests_passed:
+  stage: report
+  image: alpine:latest
+  script:
+    - echo "All tests passed successfully"
+  needs:
+    - unit_test_gradle
+    - integration_test_gradle
+    - coverage_gradle
+  when: on_success
 
 # Job para limpiar cache (opcional)
 cleanup_cache:
