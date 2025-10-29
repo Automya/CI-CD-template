@@ -53,7 +53,7 @@ coverage_gradle:
   needs:
     - test_gradle
   script:
-    - gradle test jacocoTestReport
+    - gradle test jacocoTestReport jacocoCoverageVerification
   artifacts:
     when: always
     reports:
