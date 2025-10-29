@@ -13,8 +13,8 @@ stages:
   cache:
     key: "$CI_COMMIT_REF_SLUG-gradle"
     paths:
-      - .gradle/caches/
-      - .gradle/wrapper/
+      - "**/.gradle/caches/"
+      - "**/.gradle/wrapper/"
     policy: pull-push
 
 # Job base para tests Gradle
@@ -41,7 +41,7 @@ test_gradle:
         coverage_format: jacoco
         path: "**/build/reports/jacoco/test/jacocoTestReport.xml"
       junit:
-        - build/test-results/test/TEST-*.xml
+        - "**/build/test-results/test/TEST-*.xml"
     paths:
       - "**/build/test-results/"
       - "**/build/reports/jacoco/"
