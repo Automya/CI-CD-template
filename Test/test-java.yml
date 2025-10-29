@@ -69,6 +69,13 @@ coverage_gradle:
 sonar_analysis:
   extends: .gradle_test_base
   stage: report
+  variables:
+    SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"
+  cache:
+    key: "${CI_PROJECT_NAME}-sonar"
+    paths:
+      - .sonar/cache
+      - .dependency-check
   needs:
     - validate_tests_passed
   script:
