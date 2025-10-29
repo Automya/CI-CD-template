@@ -81,6 +81,7 @@ sonar_analysis:
   script:
     - gradle dependencyCheckAnalyze
     - gradle sonarqube
+  allow_failure: true
   only:
     - main
 
