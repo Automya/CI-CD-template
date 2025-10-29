@@ -1,7 +1,3 @@
-# Template de GitLab CI para tests unitarios de Java con Gradle
-# Configuración de cache para optimizar builds
-# Generación de reportes de cobertura y tests
-
 # Variables globales
 variables:
   GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=1"
@@ -35,6 +31,7 @@ stages:
 # Tests unitarios con Gradle
 test_gradle:
   extends: .gradle_test_base
+  stage: test
   script:
     - gradle test jacocoTestReport jacocoCoverageVerification
   artifacts:
@@ -86,22 +83,3 @@ sonar_analysis:
   allow_failure: true
   only:
     - main
-
-# Job de validación: solo se ejecuta si todos los tests pasan
-# Este job debe ser usado como dependencia en los jobs de build
-validate_tests_passed:
-  stage: report
-  image: alpine:latest
-  script:
-    - echo "All tests passed successfully"
-  needs:
-    - test_gradle
-  when: on_success
-
-# Job para limpiar cache (opcional)
-cleanup_cache:
-  stage: report
-  script:
-    - echo "Cache cleanup completed"
-  when: manual
-  allow_failure: true
