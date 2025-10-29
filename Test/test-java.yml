@@ -83,8 +83,6 @@ sonar_analysis:
     - gradle sonarqube
   only:
     - main
-    - develop
-    - merge_requests
 
 # Job de validación: solo se ejecuta si todos los tests pasan
 # Este job debe ser usado como dependencia en los jobs de build
