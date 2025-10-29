@@ -86,9 +86,7 @@ sonar_analysis:
   extends: .gradle_test_base
   stage: report
   needs:
-    - unit_test_gradle
-    - integration_test_gradle
-    - coverage_gradle
+    - validate_tests_passed
   script:
     - gradle sonarqube
       -Dsonar.projectKey=$CI_PROJECT_NAME
