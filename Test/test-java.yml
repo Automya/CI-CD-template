@@ -35,6 +35,7 @@ stages:
 # Tests unitarios con Gradle
 test_gradle:
   extends: .gradle_test_base
+  stage: test
   script:
     - gradle test jacocoTestReport jacocoCoverageVerification
   artifacts:
@@ -54,7 +55,7 @@ test_gradle:
 # Análisis de dependencias con DependencyCheck
 dependency_check:
   extends: .gradle_test_base
-  stage: coverage
+  stage: test
   needs:
     - validate_tests_passed
   script:
