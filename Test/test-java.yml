@@ -50,11 +50,16 @@ test_gradle:
 
 # Análisis de dependencias con DependencyCheck
 dependency_check:
+  cache:
+    key: "$CI_COMMIT_REF_SLUG-dep-check"
+    paths:
+      - .dependency-check/
   extends: .gradle_test_base
   stage: report
   needs:
     - test_gradle
   script:
+    - '[ -n "$NVD_API_KEY" ] || { echo "NVD_API_KEY no está disponible"; exit 1; }'
     - gradle -DNVD_API_KEY="$NVD_API_KEY" dependencyCheckAnalyze
   artifacts:
     when: always
