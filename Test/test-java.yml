@@ -60,7 +60,7 @@ dependency_check:
     - test_gradle
   script:
     - '[ -n "$NVD_API_KEY" ] || { echo "NVD_API_KEY no está disponible"; exit 1; }'
-    - gradle -Dorg.owasp.dependencycheck.nvd.apiKey="$NVD_API_KEY" dependencyCheckAnalyze --info
+    - gradle -Dorg.owasp.dependencycheck.nvd.apiKey="$NVD_API_KEY" dependencyCheckAnalyze --info --no-daemon
   artifacts:
     when: always
     paths:
