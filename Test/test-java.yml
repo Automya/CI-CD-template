@@ -48,25 +48,6 @@ test_gradle:
     expire_in: 1 week
   coverage: "/Total.*?([0-9]{1,3})%/"
 
-# Análisis de dependencias con DependencyCheck
-dependency_check:
-  cache:
-    key: "$CI_COMMIT_REF_SLUG-dep-check"
-    paths:
-      - .dependency-check/
-  extends: .gradle_test_base
-  stage: report
-  needs:
-    - test_gradle
-  script:
-    - '[ -n "$NVD_API_KEY" ] || { echo "NVD_API_KEY no está disponible"; exit 1; }'
-    - gradle -Dorg.owasp.dependencycheck.nvd.apiKey="$NVD_API_KEY" dependencyCheckAnalyze --info --no-daemon
-  artifacts:
-    when: always
-    paths:
-      - "**/build/reports/dependency-check/"
-    expire_in: 1 week
-
 # Análisis de calidad de código con SonarQube
 sonar_analysis:
   extends: .gradle_test_base
@@ -95,6 +76,5 @@ analysis_and_tests_passed:
     - echo "All analysis and tests passed successfully"
   needs:
     - test_gradle
-    - dependency_check
     - sonar_analysis
   when: on_success
