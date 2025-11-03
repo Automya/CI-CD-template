@@ -4,8 +4,7 @@ variables:
 
 # Definición de stages
 stages:
-  - test
-  - coverage
+  - analysis
   - report
 
 # Cache para dependencias Gradle
@@ -17,10 +16,11 @@ stages:
       - "**/.gradle/wrapper/"
     policy: pull-push
 
-# Job base para tests Gradle
-.gradle_test_base:
+# Job base para análisis Gradle
+.gradle_analysis_base:
   image: gradle:8.5-jdk21
-  stage: test
+  services:
+    - docker:24.0.5-dind
   tags:
     - test
   <<: *gradle_cache
@@ -28,12 +28,12 @@ stages:
     - gradle --version
     - java -version
 
-# Tests unitarios con Gradle
-test_gradle:
-  extends: .gradle_test_base
-  stage: test
+# Tests y generación de reportes de cobertura
+test_and_coverage_analysis:
+  extends: .gradle_analysis_base
+  stage: analysis
   script:
-    - gradle test jacocoTestReport jacocoCoverageVerification
+    - gradle clean test jacocoTestReport jacocoCoverageVerification --no-daemon --info
   artifacts:
     when: always
     reports:
@@ -45,12 +45,14 @@ test_gradle:
     paths:
       - "**/build/test-results/"
       - "**/build/reports/jacoco/"
+      - "**/build/classes/"
+      - "**/build/resources/"
     expire_in: 1 week
   coverage: "/Total.*?([0-9]{1,3})%/"
 
 # Análisis de calidad de código con SonarQube
 sonar_analysis:
-  extends: .gradle_test_base
+  extends: .gradle_analysis_base
   stage: report
   variables:
     SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"
@@ -59,21 +61,23 @@ sonar_analysis:
     paths:
       - .sonar/cache
   needs:
-    - test_gradle
+    - test_and_coverage_analysis
+  dependencies:
+    - test_and_coverage_analysis
   script:
-    - gradle sonarqube
+    - '[ -n "$SONAR_TOKEN" ] || { echo "Warning: SONAR_TOKEN no está disponible, saltando análisis SonarQube"; exit 0; }'
+    - gradle sonar --no-daemon --warning-mode none
+  artifacts:
+    when: always
   allow_failure: true
-  only:
-    - main
-
-# Job de validación: solo se ejecuta si todos los tests pasan
-# Este job debe ser usado como dependencia en los jobs de build
+# Job de validación: solo se ejecuta si todos los análisis pasan
 analysis_and_tests_passed:
   stage: report
   image: alpine:latest
   script:
     - echo "All analysis and tests passed successfully"
   needs:
-    - test_gradle
-    - sonar_analysis
+    - job: test_and_coverage_analysis
+      artifacts: true
+    - job: sonar_analysis
   when: on_success
