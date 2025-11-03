@@ -32,6 +32,10 @@ stages:
 test_and_coverage_analysis:
   extends: .gradle_analysis_base
   stage: analysis
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: always
+    - when: never
   script:
     - gradle clean test jacocoTestReport jacocoCoverageVerification --no-daemon --info
   artifacts:
@@ -49,16 +53,15 @@ test_and_coverage_analysis:
       - "**/build/resources/"
     expire_in: 1 week
   coverage: "/Total.*?([0-9]{1,3})%/"
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH != "main"'
-      when: always
-    - when: never
-
 
 # Análisis de calidad de código con SonarQube
 sonar_analysis:
   extends: .gradle_analysis_base
   stage: report
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: always
+    - when: never
   variables:
     SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"
   cache:
@@ -74,16 +77,14 @@ sonar_analysis:
     - gradle sonar --no-daemon --warning-mode none
   artifacts:
     when: always
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH != "main"'
-      when: always
-    - when: never
-
-  allow_failure: true
 # Job de validación: solo se ejecuta si todos los análisis pasan
 analysis_and_tests_passed:
   stage: report
   image: alpine:latest
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: always
+    - when: never
   script:
     - echo "All analysis and tests passed successfully"
   needs:
@@ -91,8 +92,3 @@ analysis_and_tests_passed:
       artifacts: true
     - job: sonar_analysis
   when: on_success
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH != "main"'
-      when: always
-    - when: never
-  
