@@ -58,9 +58,8 @@ sonar_analysis:
     key: "${CI_PROJECT_NAME}-sonar"
     paths:
       - .sonar/cache
-      - .dependency-check
   needs:
-    - dependency_check
+    - test_gradle
   script:
     - gradle sonarqube
   allow_failure: true
