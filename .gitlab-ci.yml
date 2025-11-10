@@ -1,6 +1,6 @@
 image: docker:latest
 variables:
-    REPO_NAME: "CI/CD-template"
+    REPO_NAME: "CI-CD-template"
 stages:
   - mirror
 
