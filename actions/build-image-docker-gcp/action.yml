@@ -35,11 +35,11 @@ runs:
     - name: Configure Docker for Artifact Registry
       shell: bash
       run: |
-        if [ -z "${REGION}" ]; then
+        if [ -z "${GCP_REGION}" ]; then
           echo "REGION no está definido."
           exit 1
         fi
-        gcloud auth configure-docker ${REGION}-docker.pkg.dev --quiet
+        gcloud auth configure-docker ${GCP_REGION}-docker.pkg.dev --quiet
 
     - name: Build Docker image
       shell: bash
@@ -51,9 +51,9 @@ runs:
         docker build \
           --build-arg MAVEN_USERNAME=${MAVEN_USERNAME} \
           --build-arg MAVEN_PASSWORD=${MAVEN_PASSWORD} \
-          -t ${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:${{ steps.image-tag.outputs.TAG }} .
+          -t ${GCP_REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:${{ steps.image-tag.outputs.TAG }} .
 
     - name: Push Docker image
       shell: bash
       run: |
-        docker push ${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:${{ steps.image-tag.outputs.TAG }}
+        docker push ${GCP_REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:${{ steps.image-tag.outputs.TAG }}
