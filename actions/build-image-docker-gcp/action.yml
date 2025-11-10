@@ -1,3 +1,5 @@
+on:
+  - workflow_call
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   REGION: ${{secrets.REGION}}
