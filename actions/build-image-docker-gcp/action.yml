@@ -3,9 +3,6 @@ description: "Composite action: construye y sube una imagen a Artifact Registry 
 runs:
   using: "composite"
   steps:
-    - name: Checkout code (opcional si el workflow consumidor ya hizo checkout)
-      uses: actions/checkout@v4
-
     - name: Set up Cloud SDK
       uses: google-github-actions/setup-gcloud@v2
 
