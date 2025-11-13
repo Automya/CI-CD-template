@@ -1,0 +1,43 @@
+name: 'Update GitOps Image Tag'
+description: 'Modifica el tag de la imagen en el manifiesto de k8s cuando se detecta un comando deploy tag:xxxx en el comentario de un PR'
+inputs:
+  gitops_repo:
+    description: 'URL/SSH del repo GitOps'
+    required: true
+  manifest_path:
+    description: 'Ruta y nombre del manifiesto Kubernetes (ej. k8s/prod/deployment.yml)'
+    required: true
+  service_image_name:
+    description: 'Nombre de la imagen Docker (ej. miempresa/miservicio)'
+    required: true
+  github_token:
+    description: 'GitHub token con acceso a ambos repos'
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - name: Get new tag from comment
+      shell: bash
+      run: |
+        TAG=$(echo "${{ github.event.comment.body }}" | sed -n 's/^deploy tag:\([a-zA-Z0-9._-]*\).*$/\1/p')
+        if [ -z "$TAG" ]; then
+          echo "No deploy tag found, skipping."
+          exit 1
+        fi
+        echo "TAG=$TAG" >> $GITHUB_ENV
+
+    - name: Clone GitOps repo
+      shell: bash
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        git clone https://${{ inputs.github_token }}@${{ inputs.gitops_repo }} gitops-repo
+
+    - name: Update manifest tag
+      shell: bash
+      run: |
+        cd gitops-repo
+        sed -i "s|${{ inputs.service_image_name }}:[a-zA-Z0-9._-]*|${{ inputs.service_image_name }}:${TAG}|g" "${{ inputs.manifest_path }}"
+        git add "${{ inputs.manifest_path }}"
+        git commit -m "Update image tag to ${TAG} from PR comment"
+        git push
