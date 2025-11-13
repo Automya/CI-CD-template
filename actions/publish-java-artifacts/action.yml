@@ -1,0 +1,19 @@
+name: publish-java-artifacts
+description: "Composite action: sube artifacts a Artifacts (repo central). Lee variables del entorno del job consumidor."
+runs:
+  using: "composite"
+  steps:
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x ./gradlew
+
+      - name: Publish with Gradle
+        run: ./gradlew --no-daemon publish -x test
+        env:
+          MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
