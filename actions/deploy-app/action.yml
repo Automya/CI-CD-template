@@ -1,5 +1,5 @@
 name: 'Update GitOps Image Tag'
-description: 'Modifica el tag de la imagen en el manifiesto de k8s cuando se detecta un comando deploy tag:xxxx en el comentario de un PR'
+description: 'Modifica el tag de la imagen en el manifiesto de k8s cuando se detecta deploy tag:xxxx en comentario de un PR'
 inputs:
   gitops_repo:
     description: 'URL/SSH del repo GitOps'
@@ -7,8 +7,8 @@ inputs:
   manifest_path:
     description: 'Ruta y nombre del manifiesto Kubernetes (ej. k8s/prod/deployment.yml)'
     required: true
-  service_image_name:
-    description: 'Nombre de la imagen Docker (ej. miempresa/miservicio)'
+  image_name:
+    description: 'Parte final del nombre de la imagen (ej. automya-vending-sale)'
     required: true
   github_token:
     description: 'GitHub token con acceso a ambos repos'
@@ -37,7 +37,7 @@ runs:
       shell: bash
       run: |
         cd gitops-repo
-        sed -i "s|${{ inputs.service_image_name }}:[a-zA-Z0-9._-]*|${{ inputs.service_image_name }}:${TAG}|g" "${{ inputs.manifest_path }}"
+        sed -i "s|\(image:.*${{ inputs.image_name }}:\).*|\1${TAG}|g" "${{ inputs.manifest_path }}"
         git add "${{ inputs.manifest_path }}"
         git commit -m "Update image tag to ${TAG} from PR comment"
         git push
