@@ -85,13 +85,15 @@ runs:
           else
             if [[ "$BRANCH" == "main" ]]; then
               if ! is_semver "$TAG"; then
+                echo "status=invalid_tag_main" >> "$GITHUB_OUTPUT"
                 comment_pr "❌ Error: Solo se permiten tags semánticos (v1.2.3) en main. [Ver logs]($JOB_URL)"
-                exit 1
+                exit 0
               fi
             else
               if is_semver "$TAG"; then
+                echo "status=invalid_tag_branch" >> "$GITHUB_OUTPUT"
                 comment_pr "❌ Error: Tags semánticos solo están permitidos en main. [Ver logs]($JOB_URL)"
-                exit 1
+                exit 0
               fi
             fi
           fi
@@ -102,8 +104,9 @@ runs:
           TAG="${{ github.event.release.tag_name }}"
           BRANCH="${{ github.event.release.target_commitish }}"
           if [[ "$BRANCH" != "main" ]]; then
+            echo "status=invalid_release_branch" >> "$GITHUB_OUTPUT"
             comment_pr "❌ Error: Release con tag ${TAG} no apunta a main. [Ver logs]($JOB_URL)"
-            exit 1
+            exit 0
           fi
         else
           exit 0
@@ -129,8 +132,7 @@ runs:
         TAG="${{ steps.context.outputs.tag }}"
         FULL_IMAGE="$GCP_REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$IMAGE_NAME:$TAG"
 
-        set +e  # Desactiva "exit on error"
-
+        set +e  # Desactiva 'exit on error'
         docker build \
           --build-arg MAVEN_USERNAME="${MAVEN_USERNAME}" \
           --build-arg MAVEN_PASSWORD="${MAVEN_PASSWORD}" \
@@ -139,7 +141,7 @@ runs:
 
         if [ $BUILD_STATUS -ne 0 ]; then
           echo "status=build_failed" >> "$GITHUB_OUTPUT"
-          exit 0  # Permite seguir al siguiente step (el de comentar)
+          exit 0
         fi
 
         docker push "$FULL_IMAGE"
@@ -171,6 +173,15 @@ runs:
         }
 
         case "$STATUS" in
+          "invalid_tag_main")
+            comment "❌ Error: Solo se permiten tags semánticos (v1.2.3) en main. [Ver logs del job]($JOB_URL)"
+            ;;
+          "invalid_tag_branch")
+            comment "❌ Error: Tags semánticos solo están permitidos en main. [Ver logs del job]($JOB_URL)"
+            ;;
+          "invalid_release_branch")
+            comment "❌ Error: Release con tag no apunta a main. [Ver logs del job]($JOB_URL)"
+            ;;
           "build_failed")
             comment "❌ Error: Falló la construcción de la imagen ${IMAGE}. [Ver logs del job]($JOB_URL)"
             ;;
