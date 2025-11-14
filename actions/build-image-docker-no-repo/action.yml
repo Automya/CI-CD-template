@@ -1,0 +1,190 @@
+name: "GCP Docker Build & Push with PR feedback"
+description: "Builds and pushes Docker images to GCP Artifact Registry and report status to PR comments, sin credenciales Maven."
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Clean GCP credential env vars
+      shell: bash
+      run: |
+        unset GOOGLE_APPLICATION_CREDENTIALS
+        unset CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE
+        unset GOOGLE_GHA_CREDS_PATH
+        unset GCP_SA_KEY
+        export GOOGLE_APPLICATION_CREDENTIALS=""
+        export CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE=""
+        export GOOGLE_GHA_CREDS_PATH=""
+        export GCP_SA_KEY=""
+
+    - name: Install gcloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      env:
+        GOOGLE_APPLICATION_CREDENTIALS: ""
+        CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE: ""
+        GOOGLE_GHA_CREDS_PATH: ""
+        GCP_SA_KEY: ""
+
+    - name: Configure Docker for GCP
+      shell: bash
+      run: |
+        gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+
+    - name: Determine build context
+      id: context
+      shell: bash
+      run: |
+        EVENT="${{ github.event_name }}"
+        TAG=""
+        BRANCH=""
+        SAFE_BRANCH=""
+        LOGICAL_STATUS=""
+        COMMENT_BODY="${{ github.event.comment.body }}"
+        CLEAN_BODY="$(echo "$COMMENT_BODY" | sed -E 's/^[[:space:]]+//')"
+        PR_NUMBER=$(jq -r '.issue.number // empty' < "$GITHUB_EVENT_PATH")
+        JOB_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+        comment_pr() {
+          MSG="$1"
+          if [[ -n "$PR_NUMBER" ]]; then
+            curl -s -H "Authorization: token $GH_TOKEN" \
+              -X POST \
+              -d "{\"body\":\"$MSG\"}" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" > /dev/null
+          fi
+        }
+
+        if [[ "$EVENT" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
+          TAG="MAIN"
+          BRANCH="main"
+
+        elif [[ "$EVENT" == "issue_comment" && "$(jq -r '.issue.pull_request // empty' < "$GITHUB_EVENT_PATH")" != "" ]]; then
+          if [[ "$CLEAN_BODY" =~ ^[Bb]uild($|[[:space:]]) ]]; then
+            [[ "$CLEAN_BODY" =~ -t[[:space:]]+([^\ ]+) ]] && TAG="${BASH_REMATCH[1]}" || TAG=""
+            [[ "$CLEAN_BODY" =~ -b[[:space:]]+([^\ ]+) ]] && BRANCH="${BASH_REMATCH[1]}" || BRANCH=""
+          else
+            LOGICAL_STATUS="not_build_command"
+          fi
+          if [[ -z "$BRANCH" ]]; then
+            PR_URL=$(jq -r '.issue.pull_request.url // empty' < "$GITHUB_EVENT_PATH")
+            BRANCH=$(curl -s -H "Authorization: token $GH_TOKEN" "$PR_URL" | jq -r .head.ref)
+          fi
+          SAFE_BRANCH=$(echo "$BRANCH" | tr '/' '-')
+          is_semver() { [[ "$1" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; }
+          if [[ -z "$TAG" && -n "$BRANCH" ]]; then
+            TAG="$SAFE_BRANCH"
+          fi
+          if [[ "$BRANCH" == "main" && -n "$TAG" && "$TAG" != "MAIN" ]]; then
+            if ! is_semver "$TAG"; then
+              LOGICAL_STATUS="invalid_tag_main"
+            fi
+          elif [[ "$BRANCH" != "main" && -n "$TAG" ]]; then
+            if is_semver "$TAG"; then
+              LOGICAL_STATUS="invalid_tag_branch"
+            fi
+          fi
+
+        elif [[ "$EVENT" == "release" && "${GITHUB_REF}" =~ ^refs/tags/v ]]; then
+          TAG="${{ github.event.release.tag_name }}"
+          BRANCH="${{ github.event.release.target_commitish }}"
+          if [[ "$BRANCH" != "main" ]]; then
+            LOGICAL_STATUS="invalid_release_branch"
+            comment_pr "❌ Error: Release con tag ${TAG} no apunta a main. [Ver logs]($JOB_URL)"
+          fi
+        else
+          LOGICAL_STATUS="not_supported_event"
+        fi
+
+        echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+        echo "safe_branch=$SAFE_BRANCH" >> "$GITHUB_OUTPUT"
+        echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+        echo "job_url=$JOB_URL" >> "$GITHUB_OUTPUT"
+        echo "status=$LOGICAL_STATUS" >> "$GITHUB_OUTPUT"
+
+    - name: Checkout branch
+      if: steps.context.outputs.branch != ''
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ steps.context.outputs.branch }}
+
+    - name: Build and push image
+      if: steps.context.outputs.tag != ''
+      id: build
+      shell: bash
+      run: |
+        STATUS="${{ steps.context.outputs.status }}"
+        if [[ "$STATUS" != "" && "$STATUS" != "success" ]]; then
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        TAG="${{ steps.context.outputs.tag }}"
+        FULL_IMAGE="$GCP_REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$IMAGE_NAME:$TAG"
+
+        set +e  # Desactiva 'exit on error'
+        docker build -t "$FULL_IMAGE" .
+        BUILD_STATUS=$?
+
+        if [ $BUILD_STATUS -ne 0 ]; then
+          echo "status=build_failed" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        docker push "$FULL_IMAGE"
+        PUSH_STATUS=$?
+
+        if [ $PUSH_STATUS -ne 0 ]; then
+          echo "status=push_failed" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        echo "status=success" >> "$GITHUB_OUTPUT"
+
+    - name: Comment build result on PR
+      if: github.event_name == 'issue_comment'
+      shell: bash
+      run: |
+        PR_NUMBER=$(jq -r '.issue.number // empty' < "$GITHUB_EVENT_PATH")
+        JOB_URL="${{ steps.context.outputs.job_url }}"
+        STATUS="${{ steps.build.outputs.status }}"
+        TAG="${{ steps.context.outputs.tag }}"
+        IMAGE="$GCP_REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$IMAGE_NAME:$TAG"
+        comment() {
+          MSG="$1"
+          curl -s -H "Authorization: token $GH_TOKEN" \
+            -X POST \
+            -d "{\"body\":\"$MSG\"}" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" > /dev/null
+        }
+
+        case "$STATUS" in
+          "not_build_command")
+            comment "❌ Error: El comando del comentario debe empezar con 'build'."
+            ;;
+          "invalid_tag_main")
+            comment "❌ Error: Solo se permiten tags semánticos (v1.2.3) en main. [Ver logs del job]($JOB_URL)"
+            ;;
+          "invalid_tag_branch")
+            comment "❌ Error: Tags semánticos solo están permitidos en main. [Ver logs del job]($JOB_URL)"
+            ;;
+          "invalid_release_branch")
+            comment "❌ Error: Release con tag no apunta a main. [Ver logs del job]($JOB_URL)"
+            ;;
+          "not_supported_event")
+            comment "❌ Error: Tipo de evento no soportado."
+            ;;
+          "build_failed")
+            comment "❌ Error: Falló la construcción de la imagen ${IMAGE}. [Ver logs del job]($JOB_URL)"
+            ;;
+          "push_failed")
+            comment "❌ Error: Falló el push de la imagen ${IMAGE}. [Ver logs del job]($JOB_URL)"
+            ;;
+          "success")
+            comment "🎉 Éxito: Imagen ${IMAGE} subida correctamente. [Ver ejecución completa]($JOB_URL)"
+            ;;
+          *)
+            comment "🚀 Build iniciado con tag ${TAG}. [Ver ejecución]($JOB_URL)"
+            ;;
+        esac
