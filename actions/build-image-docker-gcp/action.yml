@@ -126,13 +126,35 @@ runs:
       id: build
       shell: bash
       run: |
+    - name: Build and push image
+      if: steps.context.outputs.tag != ''
+      id: build
+      shell: bash
+      run: |
         TAG="${{ steps.context.outputs.tag }}"
         FULL_IMAGE="$GCP_REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$IMAGE_NAME:$TAG"
+
+        set +e  # Desactiva "exit on error"
+
         docker build \
           --build-arg MAVEN_USERNAME="${MAVEN_USERNAME}" \
           --build-arg MAVEN_PASSWORD="${MAVEN_PASSWORD}" \
           -t "$FULL_IMAGE" .
+        BUILD_STATUS=$?
+
+        if [ $BUILD_STATUS -ne 0 ]; then
+          echo "status=build_failed" >> "$GITHUB_OUTPUT"
+          exit 0  # Permite seguir al siguiente step (el de comentar)
+        fi
+
         docker push "$FULL_IMAGE"
+        PUSH_STATUS=$?
+
+        if [ $PUSH_STATUS -ne 0 ]; then
+          echo "status=push_failed" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
         echo "status=success" >> "$GITHUB_OUTPUT"
 
     - name: Comment build result on PR
