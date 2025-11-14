@@ -7,7 +7,6 @@ runs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    # Limpia variables credenciales para que GCloud nunca busque un archivo de credencial
     - name: Clean GCP credential env vars
       shell: bash
       run: |
@@ -20,7 +19,6 @@ runs:
         export GOOGLE_GHA_CREDS_PATH=""
         export GCP_SA_KEY=""
 
-    # Instala gcloud sin login, y sobreescribe env solo para este step
     - name: Install gcloud SDK
       uses: google-github-actions/setup-gcloud@v2
       env:
@@ -34,7 +32,6 @@ runs:
       run: |
         gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
 
-    # Determina correctamente el nombre de la rama real y el tag para Docker y el estado lógico
     - name: Determine build context
       id: context
       shell: bash
@@ -45,6 +42,7 @@ runs:
         SAFE_BRANCH=""
         LOGICAL_STATUS=""
         COMMENT_BODY="${{ github.event.comment.body }}"
+        CLEAN_BODY="$(echo "$COMMENT_BODY" | sed -E 's/^[[:space:]]+//')"
         PR_NUMBER=$(jq -r '.issue.number // empty' < "$GITHUB_EVENT_PATH")
         JOB_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
@@ -63,9 +61,9 @@ runs:
           BRANCH="main"
 
         elif [[ "$EVENT" == "issue_comment" && "$(jq -r '.issue.pull_request // empty' < "$GITHUB_EVENT_PATH")" != "" ]]; then
-          if [[ "$COMMENT_BODY" =~ ^build($|\s) ]]; then
-            [[ "$COMMENT_BODY" =~ -t[[:space:]]+([^\ ]+) ]] && TAG="${BASH_REMATCH[1]}" || TAG=""
-            [[ "$COMMENT_BODY" =~ -b[[:space:]]+([^\ ]+) ]] && BRANCH="${BASH_REMATCH[1]}" || BRANCH=""
+          if [[ "$CLEAN_BODY" =~ ^[Bb]uild($|[[:space:]]) ]]; then
+            [[ "$CLEAN_BODY" =~ -t[[:space:]]+([^\ ]+) ]] && TAG="${BASH_REMATCH[1]}" || TAG=""
+            [[ "$CLEAN_BODY" =~ -b[[:space:]]+([^\ ]+) ]] && BRANCH="${BASH_REMATCH[1]}" || BRANCH=""
           else
             LOGICAL_STATUS="not_build_command"
           fi
@@ -98,7 +96,7 @@ runs:
           if [[ -n "$LOGICAL_STATUS" ]]; then
             case "$LOGICAL_STATUS" in
               "not_build_command")
-                comment_pr "❌ Error: El comando del comentario debe ser 'build'."
+                comment_pr "❌ Error: El comando del comentario debe empezar con 'build'."
                 ;;
               "invalid_tag_main")
                 comment_pr "❌ Error: Solo se permiten tags semánticos (v1.2.3) en main. [Ver logs]($JOB_URL)"
@@ -173,7 +171,6 @@ runs:
         echo "status=success" >> "$GITHUB_OUTPUT"
 
     - name: Comment build result on PR
-      # Siempre debe ejecutarse en issue_comment
       if: github.event_name == 'issue_comment'
       shell: bash
       run: |
@@ -193,7 +190,7 @@ runs:
 
         case "$STATUS" in
           "not_build_command")
-            comment "❌ Error: El comando del comentario debe ser 'build'."
+            comment "❌ Error: El comando del comentario debe empezar con 'build'."
             ;;
           "invalid_tag_main")
             comment "❌ Error: Solo se permiten tags semánticos (v1.2.3) en main. [Ver logs del job]($JOB_URL)"
@@ -217,7 +214,6 @@ runs:
             comment "🎉 Éxito: Imagen ${IMAGE} subida correctamente. [Ver ejecución completa]($JOB_URL)"
             ;;
           *)
-            # Si no hubo status, igual se informa inicio
             comment "🚀 Build iniciado con tag ${TAG}. [Ver ejecución]($JOB_URL)"
             ;;
         esac
