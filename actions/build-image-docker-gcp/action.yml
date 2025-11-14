@@ -93,23 +93,6 @@ runs:
             fi
           fi
 
-          if [[ -n "$LOGICAL_STATUS" ]]; then
-            case "$LOGICAL_STATUS" in
-              "not_build_command")
-                comment_pr "❌ Error: El comando del comentario debe empezar con 'build'."
-                ;;
-              "invalid_tag_main")
-                comment_pr "❌ Error: Solo se permiten tags semánticos (v1.2.3) en main. [Ver logs]($JOB_URL)"
-                ;;
-              "invalid_tag_branch")
-                comment_pr "❌ Error: Tags semánticos solo están permitidos en main. [Ver logs]($JOB_URL)"
-                ;;
-            esac
-            # No hacemos exit aquí, el build lo respetará por status.
-          else
-            comment_pr "🚀 Build iniciado para la rama ${BRANCH} con tag ${TAG}. [Ver ejecución]($JOB_URL)"
-          fi
-
         elif [[ "$EVENT" == "release" && "${GITHUB_REF}" =~ ^refs/tags/v ]]; then
           TAG="${{ github.event.release.tag_name }}"
           BRANCH="${{ github.event.release.target_commitish }}"
