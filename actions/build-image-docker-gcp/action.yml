@@ -34,16 +34,16 @@ runs:
       run: |
         gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
 
-    # Determina correctamente el nombre de la rama real y el tag para Docker
+    # Determina correctamente el nombre de la rama real y el tag para Docker y el estado lógico
     - name: Determine build context
       id: context
       shell: bash
       run: |
-        set -e
         EVENT="${{ github.event_name }}"
         TAG=""
         BRANCH=""
         SAFE_BRANCH=""
+        LOGICAL_STATUS=""
         COMMENT_BODY="${{ github.event.comment.body }}"
         PR_NUMBER=$(jq -r '.issue.number // empty' < "$GITHUB_EVENT_PATH")
         JOB_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
@@ -67,7 +67,7 @@ runs:
             [[ "$COMMENT_BODY" =~ -t[[:space:]]+([^\ ]+) ]] && TAG="${BASH_REMATCH[1]}" || TAG=""
             [[ "$COMMENT_BODY" =~ -b[[:space:]]+([^\ ]+) ]] && BRANCH="${BASH_REMATCH[1]}" || BRANCH=""
           else
-            exit 0
+            LOGICAL_STATUS="not_build_command"
           fi
 
           if [[ -z "$BRANCH" ]]; then
@@ -80,36 +80,47 @@ runs:
           is_semver() { [[ "$1" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; }
 
           # El TAG siempre será el SAFE_BRANCH si no está explícito
-          if [[ -z "$TAG" ]]; then
+          if [[ -z "$TAG" && -n "$BRANCH" ]]; then
             TAG="$SAFE_BRANCH"
-          else
-            if [[ "$BRANCH" == "main" ]]; then
-              if ! is_semver "$TAG"; then
-                echo "status=invalid_tag_main" >> "$GITHUB_OUTPUT"
-                comment_pr "❌ Error: Solo se permiten tags semánticos (v1.2.3) en main. [Ver logs]($JOB_URL)"
-                exit 0
-              fi
-            else
-              if is_semver "$TAG"; then
-                echo "status=invalid_tag_branch" >> "$GITHUB_OUTPUT"
-                comment_pr "❌ Error: Tags semánticos solo están permitidos en main. [Ver logs]($JOB_URL)"
-                exit 0
-              fi
+          fi
+
+          # Chequeo de errores lógicos
+          if [[ "$BRANCH" == "main" && -n "$TAG" && "$TAG" != "MAIN" ]]; then
+            if ! is_semver "$TAG"; then
+              LOGICAL_STATUS="invalid_tag_main"
+            fi
+          elif [[ "$BRANCH" != "main" && -n "$TAG" ]]; then
+            if is_semver "$TAG"; then
+              LOGICAL_STATUS="invalid_tag_branch"
             fi
           fi
 
-          comment_pr "🚀 Build iniciado para la rama ${BRANCH} con tag ${TAG}. [Ver ejecución]($JOB_URL)"
+          if [[ -n "$LOGICAL_STATUS" ]]; then
+            case "$LOGICAL_STATUS" in
+              "not_build_command")
+                comment_pr "❌ Error: El comando del comentario debe ser 'build'."
+                ;;
+              "invalid_tag_main")
+                comment_pr "❌ Error: Solo se permiten tags semánticos (v1.2.3) en main. [Ver logs]($JOB_URL)"
+                ;;
+              "invalid_tag_branch")
+                comment_pr "❌ Error: Tags semánticos solo están permitidos en main. [Ver logs]($JOB_URL)"
+                ;;
+            esac
+            # No hacemos exit aquí, el build lo respetará por status.
+          else
+            comment_pr "🚀 Build iniciado para la rama ${BRANCH} con tag ${TAG}. [Ver ejecución]($JOB_URL)"
+          fi
 
         elif [[ "$EVENT" == "release" && "${GITHUB_REF}" =~ ^refs/tags/v ]]; then
           TAG="${{ github.event.release.tag_name }}"
           BRANCH="${{ github.event.release.target_commitish }}"
           if [[ "$BRANCH" != "main" ]]; then
-            echo "status=invalid_release_branch" >> "$GITHUB_OUTPUT"
+            LOGICAL_STATUS="invalid_release_branch"
             comment_pr "❌ Error: Release con tag ${TAG} no apunta a main. [Ver logs]($JOB_URL)"
-            exit 0
           fi
         else
-          exit 0
+          LOGICAL_STATUS="not_supported_event"
         fi
 
         # Para checkout y trabajo, usar la rama real (BRANCH), para el tag docker el "SAFE_BRANCH"
@@ -117,6 +128,7 @@ runs:
         echo "safe_branch=$SAFE_BRANCH" >> "$GITHUB_OUTPUT"
         echo "tag=$TAG" >> "$GITHUB_OUTPUT"
         echo "job_url=$JOB_URL" >> "$GITHUB_OUTPUT"
+        echo "status=$LOGICAL_STATUS" >> "$GITHUB_OUTPUT"
 
     - name: Checkout branch
       if: steps.context.outputs.branch != ''
@@ -129,6 +141,12 @@ runs:
       id: build
       shell: bash
       run: |
+        STATUS="${{ steps.context.outputs.status }}"
+        if [[ "$STATUS" != "" && "$STATUS" != "success" ]]; then
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
         TAG="${{ steps.context.outputs.tag }}"
         FULL_IMAGE="$GCP_REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$IMAGE_NAME:$TAG"
 
@@ -155,7 +173,8 @@ runs:
         echo "status=success" >> "$GITHUB_OUTPUT"
 
     - name: Comment build result on PR
-      if: github.event_name == 'issue_comment' && steps.context.outputs.tag != ''
+      # Siempre debe ejecutarse en issue_comment
+      if: github.event_name == 'issue_comment'
       shell: bash
       run: |
         PR_NUMBER=$(jq -r '.issue.number // empty' < "$GITHUB_EVENT_PATH")
@@ -173,6 +192,9 @@ runs:
         }
 
         case "$STATUS" in
+          "not_build_command")
+            comment "❌ Error: El comando del comentario debe ser 'build'."
+            ;;
           "invalid_tag_main")
             comment "❌ Error: Solo se permiten tags semánticos (v1.2.3) en main. [Ver logs del job]($JOB_URL)"
             ;;
@@ -182,6 +204,9 @@ runs:
           "invalid_release_branch")
             comment "❌ Error: Release con tag no apunta a main. [Ver logs del job]($JOB_URL)"
             ;;
+          "not_supported_event")
+            comment "❌ Error: Tipo de evento no soportado."
+            ;;
           "build_failed")
             comment "❌ Error: Falló la construcción de la imagen ${IMAGE}. [Ver logs del job]($JOB_URL)"
             ;;
@@ -190,5 +215,9 @@ runs:
             ;;
           "success")
             comment "🎉 Éxito: Imagen ${IMAGE} subida correctamente. [Ver ejecución completa]($JOB_URL)"
+            ;;
+          *)
+            # Si no hubo status, igual se informa inicio
+            comment "🚀 Build iniciado con tag ${TAG}. [Ver ejecución]($JOB_URL)"
             ;;
         esac
