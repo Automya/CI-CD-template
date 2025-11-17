@@ -135,6 +135,8 @@ runs:
         docker build \
           --build-arg MAVEN_USERNAME="${MAVEN_USERNAME}" \
           --build-arg MAVEN_PASSWORD="${MAVEN_PASSWORD}" \
+          --build-arg MAVEN_USERNAME2="${MAVEN_USERNAME2}" \
+          --build-arg MAVEN_PASSWORD2="${MAVEN_PASSWORD2}" \
           -t "$FULL_IMAGE" .
         BUILD_STATUS=$?
 
