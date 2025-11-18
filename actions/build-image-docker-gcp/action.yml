@@ -9,8 +9,6 @@ runs:
       shell: bash
       run: |
         PR_NUMBER=$(jq -r '.issue.number // empty' < "$GITHUB_EVENT_PATH")
-        JOB_URL="${{ steps.context.outputs.job_url }}"
-        TAG="${{ steps.context.outputs.tag }}"
         comment() {
           MSG="$1"
           curl -s -H "Authorization: token $GH_TOKEN" \
@@ -18,7 +16,7 @@ runs:
             -d "{\"body\":\"$MSG\"}" \
             "https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" > /dev/null
         }
-        comment "🚀 Build iniciado con tag ${TAG}."
+        comment "🚀 Iniciando Build, espere por favor..."
 
     - name: Checkout code
       uses: actions/checkout@v4
