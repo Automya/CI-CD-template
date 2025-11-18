@@ -17,7 +17,7 @@ inputs:
     description: 'Token con permisos write en el repo destino GitOps (ej. PAT para MYORG/GITOPS-REPO).'
     required: true
   source_repo_token:
-    description: 'Token para interactuar con la PR de origen (comentarios). Por defecto pasar ${{ secrets.GITHUB_TOKEN }} desde el workflow.'
+    description: 'Token para interactuar con la PR de origen (comentarios). Por defecto pasar el GITHUB_TOKEN desde el workflow.'
     required: false
     default: ''
   base_branch:
@@ -31,7 +31,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Init: set comment token and create error file
+    - name: "Init: set comment token and create error file"
       shell: bash
       run: |
         # Este step se ejecuta siempre al inicio y garantiza que COMMENT_TOKEN esté disponible para el step
