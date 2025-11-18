@@ -13,10 +13,6 @@ runs:
     - name: Make Gradle wrapper executable
       run: chmod +x ./gradlew
       shell: bash
-
-    - name: build gradle
-      run: ./gradlew build --no-daemon
-      shell: bash
       
     - name: Publish with Gradle
       run: ./gradlew --no-daemon publish -x test
