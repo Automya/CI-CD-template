@@ -21,6 +21,3 @@ runs:
     - name: Publish with Gradle
       run: ./gradlew --no-daemon publish -x test
       shell: bash
-      env:
-        MAVEN_USERNAME: ${{ env.MAVEN_USERNAME }}
-        MAVEN_PASSWORD: ${{ env.MAVEN_PASSWORD }}
