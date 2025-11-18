@@ -4,6 +4,20 @@ description: "Builds and pushes Docker images to GCP Artifact Registry using Wor
 runs:
   using: "composite"
   steps:
+    - name: begin notification
+      if: github.event_name == 'issue_comment'
+      shell: bash
+        PR_NUMBER=$(jq -r '.issue.number // empty' < "$GITHUB_EVENT_PATH")
+        JOB_URL="${{ steps.context.outputs.job_url }}"
+        comment() {
+          MSG="$1"
+          curl -s -H "Authorization: token $GH_TOKEN" \
+            -X POST \
+            -d "{\"body\":\"$MSG\"}" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" > /dev/null
+        }
+        comment "🚀 Build iniciado con tag ${TAG}. [Ver ejecución]($JOB_URL)"
+
     - name: Checkout code
       uses: actions/checkout@v4
 
@@ -202,8 +216,5 @@ runs:
             ;;
           "success")
             comment "🎉 Éxito: Imagen ${IMAGE} subida correctamente. [Ver ejecución completa]($JOB_URL)"
-            ;;
-          *)
-            comment "🚀 Build iniciado con tag ${TAG}. [Ver ejecución]($JOB_URL)"
             ;;
         esac
