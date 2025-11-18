@@ -1,8 +1,8 @@
 name: Update GitOps Image Tag
-description: Modifica el tag de una imagen en un manifiesto Kubernetes y abre una PR. Siempre reporta resultado (ok/fallo) en la PR de origen.
+description: Modifica el tag de una imagen en un manifiesto Kubernetes y abre/mergea una PR en el repo GitOps. Siempre reporta resultado (ok/fallo) en la PR de origen.
 inputs:
   gitops_repo:
-    description: 'Repo destino en formato owner/repo (ej: myorg/gitops).'
+    description: 'Repo destino en formato owner/repo o URL (ej: myorg/gitops o github.com/myorg/gitops.git).'
     required: true
   staging_manifest_path:
     description: 'Ruta al manifiesto para staging dentro del repo (ej. k8s/staging/deployment.yml).'
@@ -21,7 +21,7 @@ inputs:
     required: false
     default: ''
   base_branch:
-    description: 'Base branch para la PR (por defecto main).'
+    description: 'Base branch para la PR/merge (por defecto main).'
     required: false
     default: 'main'
   pr_title:
@@ -99,14 +99,13 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        # If yq exists but is not mikefarah's, replace it.
         if command -v yq >/dev/null 2>&1; then
           ver=$(yq --version 2>/dev/null || true)
           echo "Detected yq: $ver"
           if echo "$ver" | grep -qi 'mikefarah'; then
             echo "mikefarah yq already installed: $ver"
           else
-            echo "Different yq binary detected. Installing mikefarah yq v4..."
+            echo "Different yq detected. Installing mikefarah yq v4..."
             curl -sL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq
             chmod +x /usr/local/bin/yq
           fi
@@ -163,10 +162,11 @@ runs:
           exit 1
         fi
 
+        # backup but DO NOT add .bak to git
         cp "$FILE" "${FILE}.bak"
 
-        # Count containers (works with mikefarah yq v4)
-        cnt=$(yq eval '.spec.template.spec.containers | length' "$FILE") || cnt=0
+        # Count containers (mikefarah yq v4)
+        cnt=$(yq eval '.spec.template.spec.containers | length' "$FILE" 2>/dev/null || echo 0)
         if [ "$cnt" = "null" ]; then cnt=0; fi
 
         if [ "$cnt" -eq 0 ]; then
@@ -180,30 +180,87 @@ runs:
             if echo "$img" | grep -q "$IMAGE_NAME"; then
               base="${img%%:*}"
               new_image="${base}:${TAG}"
-              # Use yq to set the image for the container index
               yq eval -i ".spec.template.spec.containers[$i].image = \"${new_image}\"" "$FILE"
               echo "Updated container[$i] image -> $new_image"
             fi
           done
         fi
 
-        git add "$FILE"
+        # Stage only the updated file (avoid adding backups or other files)
+        git add -- "$FILE"
+        # If nothing changed, commit will exit non-zero; handle that
+        if git diff --cached --quiet; then
+          echo "No changes detected after update. Skipping commit/PR."
+          echo "GITOPS_PR_URL=" >> $GITHUB_ENV
+          exit 0
+        fi
         git commit -m "chore: update ${IMAGE_NAME} image to ${TAG}" || true
 
-    - name: Create branch and open PR with changes
+    - name: Create branch, push to GitOps repo and open & merge PR via API (Option A)
       if: ${{ env.SKIP == 'false' }}
-      id: create_pr
-      uses: peter-evans/create-pull-request@v5
-      with:
-        token: ${{ inputs.github_token }}
-        base: ${{ inputs.base_branch }}
-        branch: update-image/${{ inputs.image_name }}-${{ env.TAG }}
-        title: ${{ inputs.pr_title }} - ${{ inputs.image_name }} -> ${{ env.TAG }}
-        body: |
-          Automated PR to update image '${{ inputs.image_name }}' to tag '${{ env.TAG }}'.
-          Source: comment on PR #${{ github.event.issue.number || github.event.pull_request.number || '' }}.
-        commit-message: "chore: update ${{ inputs.image_name }} image to ${{ env.TAG }}"
-        labels: automated,update-image
+      shell: bash
+      working-directory: gitops-repo
+      run: |
+        set -euo pipefail
+        ERRFILE="$GITHUB_WORKSPACE/action_error.txt"
+        trap 'rc=$?; echo "ERROR creating PR/pushing, exit_code=$rc" >> "$ERRFILE"; exit $rc' ERR
+
+        # Normalize repo owner/repo
+        IN_REPO="${{ inputs.gitops_repo }}"
+        if echo "$IN_REPO" | grep -qi "github.com"; then
+          # strip protocol and .git
+          owner_repo=$(echo "$IN_REPO" | sed -E 's#(https?://)?(www\.)?github.com/##I' | sed -E 's#\.git$##I')
+        else
+          owner_repo="$IN_REPO"
+        fi
+        echo "Using target repo: $owner_repo"
+
+        TOKEN="${{ inputs.github_token }}"
+        BRANCH="update-image/${{ inputs.image_name }}-${{ env.TAG }}"
+        PR_TITLE="${{ inputs.pr_title }} - ${{ inputs.image_name }} -> ${TAG}"
+        PR_BODY="Automated PR to update image '${{ inputs.image_name }}' to tag '${TAG}'. Source: comment on PR #${{ github.event.issue.number || github.event.pull_request.number || '' }}."
+
+        # Ensure git config
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+
+        # Create branch from current HEAD
+        git checkout -b "$BRANCH"
+
+        # Push branch using token-authenticated HTTPS (not exposing token in logs)
+        remote_url="https://x-access-token:${TOKEN}@github.com/${owner_repo}.git"
+        git remote set-url origin "$remote_url"
+        git push --set-upstream origin "$BRANCH"
+
+        # Create PR via GitHub API
+        api_url="https://api.github.com/repos/${owner_repo}/pulls"
+        pr_payload=$(printf '{"title":"%s","head":"%s","base":"%s","body":"%s"}' "$PR_TITLE" "$BRANCH" "${{ inputs.base_branch }}" "$PR_BODY")
+        pr_response=$(curl -s -X POST -H "Authorization: token ${TOKEN}" -H "Accept: application/vnd.github+json" "$api_url" -d "$pr_payload")
+        pr_html=$(echo "$pr_response" | python3 -c 'import sys,json; j=json.load(sys.stdin); print(j.get("html_url",""))')
+        pr_number=$(echo "$pr_response" | python3 -c 'import sys,json; j=json.load(sys.stdin); print(j.get("number",""))')
+
+        if [ -z "$pr_html" ] || [ "$pr_html" = "None" ]; then
+          echo "Failed to create PR. Response: $pr_response" >> "$ERRFILE"
+          exit 1
+        fi
+
+        echo "Created PR: $pr_html (number: $pr_number)"
+        echo "GITOPS_PR_URL=$pr_html" >> $GITHUB_ENV
+        echo "GITOPS_PR_NUMBER=$pr_number" >> $GITHUB_ENV
+
+        # Auto-merge the PR immediately (no manual approval). Use merge method 'merge'.
+        merge_url="https://api.github.com/repos/${owner_repo}/pulls/${pr_number}/merge"
+        merge_payload='{"commit_title":"'"${PR_TITLE}"'","merge_method":"merge"}'
+        merge_response=$(curl -s -X PUT -H "Authorization: token ${TOKEN}" -H "Accept: application/vnd.github+json" "$merge_url" -d "$merge_payload")
+        merged=$(echo "$merge_response" | python3 -c 'import sys,json; j=json.load(sys.stdin); print(j.get("merged", False))' 2>/dev/null || echo "false")
+        if [ "$merged" = "True" ] || [ "$merged" = "true" ]; then
+          echo "PR merged successfully."
+        else
+          # If failed to merge, write info to ERRFILE but continue: user wanted no manual approval,
+          # but if merge fails (protection rules) we still surface the PR link so it can be reviewed.
+          echo "Auto-merge failed or not permitted. Merge response: $merge_response" >> "$ERRFILE"
+          echo "Auto-merge response recorded in $ERRFILE"
+        fi
 
     - name: Report FAILURE to source PR
       if: always()
@@ -211,6 +268,7 @@ runs:
       env:
         COMMENT_TOKEN: ${{ env.COMMENT_TOKEN }}
         ERRFILE: ${{ github.workspace }}/action_error.txt
+        GITOPS_PR_URL: ${{ env.GITOPS_PR_URL }}
       with:
         github-token: ${{ env.COMMENT_TOKEN }}
         script: |
@@ -218,8 +276,12 @@ runs:
           const errFile = process.env.ERRFILE;
           const hasError = fs.existsSync(errFile) && fs.readFileSync(errFile,'utf8').trim().length > 0;
           if (!hasError) return;
-          let body = ':x: Update image tag action failed.\n\n**Error details:**\n';
+          let body = ':x: Update image tag action failed or had warnings.\n\n**Error details:**\n';
           body += '```\n' + fs.readFileSync(errFile,'utf8') + '\n```\n';
+          const prUrl = process.env.GITOPS_PR_URL || '';
+          if (prUrl) {
+            body += `\nPR creada en repo GitOps (revise y mergee manualmente si es necesario): ${prUrl}\n`;
+          }
           const issueNumber = context.issue?.number || (context.payload && context.payload.issue && context.payload.issue.number) || (context.payload && context.payload.pull_request && context.payload.pull_request.number);
           if (!issueNumber) {
             body += '\n(Note: Unable to determine issue/PR number to comment on.)';
@@ -238,7 +300,7 @@ runs:
       uses: actions/github-script@v6
       env:
         COMMENT_TOKEN: ${{ env.COMMENT_TOKEN }}
-        GITOPS_PR_URL: ${{ steps.create_pr.outputs.pull_request_html_url || '' }}
+        GITOPS_PR_URL: ${{ env.GITOPS_PR_URL }}
         ERRFILE: ${{ github.workspace }}/action_error.txt
       with:
         github-token: ${{ env.COMMENT_TOKEN }}
@@ -248,11 +310,11 @@ runs:
           const hasError = fs.existsSync(errFile) && fs.readFileSync(errFile,'utf8').trim().length > 0;
           if (hasError) return;
           const prUrl = process.env.GITOPS_PR_URL || '';
-          let body = ':white_check_mark: Update image tag action completed successfully.\n\n';
+          let body = ':white_check_mark: Update image tag action completed.\n\n';
           if (prUrl) {
-            body += `Se ha creado/actualizado la PR en el repo GitOps: ${prUrl}\n\n`;
+            body += `Se ha creado la PR en el repo GitOps: ${prUrl}\n\n`;
           } else {
-            body += 'No se creó PR (posiblemente no hubo cambios o la acción de PR devolvió otra respuesta).\n\n';
+            body += 'No se creó PR (posiblemente no hubo cambios o ya existía la versión solicitada).\n\n';
           }
           body += `Requested by comment: \n> ${context.payload.comment && context.payload.comment.body ? context.payload.comment.body : '(contenido no disponible)'}\n`;
           const issueNumber = context.issue?.number || (context.payload && context.payload.issue && context.payload.issue.number) || (context.payload && context.payload.pull_request && context.payload.pull_request.number);
