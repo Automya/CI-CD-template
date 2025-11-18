@@ -1,43 +1,248 @@
-name: 'Update GitOps Image Tag'
-description: 'Modifica el tag de la imagen en el manifiesto de k8s cuando se detecta deploy tag:xxxx en comentario de un PR'
+name: Update GitOps Image Tag
+description: Modifica el tag de una imagen en un manifiesto Kubernetes y abre una PR. Siempre reporta resultado (ok/fallo) en la PR de origen.
 inputs:
   gitops_repo:
-    description: 'URL/SSH del repo GitOps'
+    description: 'Repo destino en formato owner/repo (ej: myorg/gitops).'
     required: true
-  manifest_path:
-    description: 'Ruta y nombre del manifiesto Kubernetes (ej. k8s/prod/deployment.yml)'
+  staging_manifest_path:
+    description: 'Ruta al manifiesto para staging dentro del repo (ej. k8s/staging/deployment.yml).'
+    required: true
+  prod_manifest_path:
+    description: 'Ruta al manifiesto para prod dentro del repo (ej. k8s/prod/deployment.yml).'
     required: true
   image_name:
-    description: 'Parte final del nombre de la imagen (ej. automya-vending-sale)'
+    description: 'Nombre o sufijo del nombre de la imagen a buscar (ej. automya-vending-sale).'
     required: true
   github_token:
-    description: 'GitHub token con acceso a ambos repos'
+    description: 'Token con permisos write en el repo destino GitOps (ej. PAT para MYORG/GITOPS-REPO).'
     required: true
+  source_repo_token:
+    description: 'Token para interactuar con la PR de origen (comentarios). Por defecto pasar ${{ secrets.GITHUB_TOKEN }} desde el workflow.'
+    required: false
+    default: ''
+  base_branch:
+    description: 'Base branch para la PR (por defecto main).'
+    required: false
+    default: 'main'
+  pr_title:
+    description: 'Título de la PR.'
+    required: false
+    default: 'chore: update image tag'
 runs:
-  using: "composite"
+  using: composite
   steps:
-    - name: Get new tag from comment
+    - name: Init: set comment token and create error file
       shell: bash
       run: |
-        TAG=$(echo "${{ github.event.comment.body }}" | sed -n 's/^deploy tag:\([a-zA-Z0-9._-]*\).*$/\1/p')
+        # Este step se ejecuta siempre al inicio y garantiza que COMMENT_TOKEN esté disponible para el step
+        # de reporte aunque falle cualquier paso posterior.
+        if [ -n "${{ inputs.source_repo_token }}" ]; then
+          echo "COMMENT_TOKEN=${{ inputs.source_repo_token }}" >> $GITHUB_ENV
+          echo "COMMENT_TOKEN_PROVIDED=true" >> $GITHUB_ENV
+        else
+          # fallback to github_token input (útil si se pasa GITHUB_TOKEN desde el workflow)
+          echo "COMMENT_TOKEN=${{ inputs.github_token }}" >> $GITHUB_ENV
+          echo "COMMENT_TOKEN_PROVIDED=false" >> $GITHUB_ENV
+        fi
+
+        # file donde se volcarán mensajes de error desde cualquier step
+        ERRFILE="$GITHUB_WORKSPACE/action_error.txt"
+        : > "$ERRFILE"   # limpia/crea el fichero
+        echo "Initialized COMMENT_TOKEN and cleared $ERRFILE"
+
+    - name: Extract tag and target env from comment
+      shell: bash
+      run: |
+        # Cada step crítico tiene su propio trap que vuelca información en action_error.txt en caso de fallo
+        set -euo pipefail
+        ERRFILE="$GITHUB_WORKSPACE/action_error.txt"
+        trap 'rc=$?; echo "ERROR in step Extract tag and env. exit_code=$rc" >> "$ERRFILE"; echo "Comment body: ${GITHUB_EVENT_COMMENT_BODY:-(no body)}" >> "$ERRFILE"; exit $rc' ERR
+
+        BODY="${{ github.event.comment.body || '' }}"
+        export GITHUB_EVENT_COMMENT_BODY="$BODY"
+
+        TAG=$(echo "$BODY" | grep -oP '(?i)tag:\s*\K[^\s]+' | head -n1 || true)
+        ENV=$(echo "$BODY" | grep -oP '(?i)env:\s*\K(staging|stage|st|prod|production|prd)\b' | head -n1 || true)
+        if [ -z "$ENV" ]; then
+          ENV=$(echo "$BODY" | grep -oP '(?i)\b(staging|stage|st|prod|production|prd)\b' | head -n1 || true)
+        fi
+
+        if [ -n "$ENV" ]; then
+          env_lc=$(echo "$ENV" | tr '[:upper:]' '[:lower:]')
+          case "$env_lc" in
+            prod|production|prd) TARGET_ENV="prod" ;;
+            staging|stage|st) TARGET_ENV="staging" ;;
+            *) TARGET_ENV="staging" ;;
+          esac
+        else
+          TARGET_ENV="staging"
+        fi
+
         if [ -z "$TAG" ]; then
-          echo "No deploy tag found, skipping."
+          echo "No se encontró 'tag:' en el comentario. Se marcará SKIP=true."
+          echo "SKIP=true" >> $GITHUB_ENV
+          echo "TAG=" >> $GITHUB_ENV
+          echo "TARGET_ENV=$TARGET_ENV" >> $GITHUB_ENV
+          exit 0
+        fi
+
+        echo "TAG=$TAG" >> $GITHUB_ENV
+        echo "TARGET_ENV=$TARGET_ENV" >> $GITHUB_ENV
+        echo "SKIP=false" >> $GITHUB_ENV
+        echo "Found TAG=$TAG for env=$TARGET_ENV"
+
+    - name: Checkout GitOps repository
+      if: ${{ env.SKIP == 'false' }}
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ inputs.gitops_repo }}
+        token: ${{ inputs.github_token }}
+        path: gitops-repo
+
+    - name: Install yq
+      if: ${{ env.SKIP == 'false' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        ERRFILE="$GITHUB_WORKSPACE/action_error.txt"
+        trap 'rc=$?; echo "ERROR installing yq, exit_code=$rc" >> "$ERRFILE"; exit $rc' ERR
+
+        if ! command -v yq >/dev/null 2>&1; then
+          curl -sL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq
+          chmod +x /usr/local/bin/yq
+        fi
+
+    - name: Validate semantic version for prod (if required)
+      if: ${{ env.SKIP == 'false' }}
+      shell: bash
+      env:
+        TAG: ${{ env.TAG }}
+        TARGET_ENV: ${{ env.TARGET_ENV }}
+      run: |
+        set -euo pipefail
+        ERRFILE="$GITHUB_WORKSPACE/action_error.txt"
+        trap 'rc=$?; echo "ERROR validating semver, exit_code=$rc" >> "$ERRFILE"; exit $rc' ERR
+
+        if [ "$TARGET_ENV" = "prod" ]; then
+          if ! echo "$TAG" | grep -Pq '^v?\d+\.\d+\.\d+([-\+][A-Za-z0-9\.-]+)?$'; then
+            echo "ERROR: En producción sólo se permiten tags semánticos. Se encontró: '$TAG'" >> "$ERRFILE"
+            exit 1
+          fi
+        fi
+
+    - name: Determine manifest path
+      if: ${{ env.SKIP == 'false' }}
+      shell: bash
+      run: |
+        if [ "${{ env.TARGET_ENV }}" = "prod" ]; then
+          echo "MANIFEST_PATH=${{ inputs.prod_manifest_path }}" >> $GITHUB_ENV
+        else
+          echo "MANIFEST_PATH=${{ inputs.staging_manifest_path }}" >> $GITHUB_ENV
+        fi
+
+    - name: Update manifest image tag using yq
+      if: ${{ env.SKIP == 'false' }}
+      shell: bash
+      working-directory: gitops-repo
+      env:
+        TAG: ${{ env.TAG }}
+        IMAGE_NAME: ${{ inputs.image_name }}
+        FILE: ${{ env.MANIFEST_PATH }}
+      run: |
+        set -euo pipefail
+        ERRFILE="$GITHUB_WORKSPACE/action_error.txt"
+        trap 'rc=$?; echo "ERROR updating manifest, exit_code=$rc" >> "$ERRFILE"; exit $rc' ERR
+
+        if [ ! -f "$FILE" ]; then
+          echo "Manifest $FILE not found" >> "$ERRFILE"
           exit 1
         fi
-        echo "TAG=$TAG" >> $GITHUB_ENV
 
-    - name: Clone GitOps repo
-      shell: bash
-      run: |
-        git config --global user.name "github-actions[bot]"
-        git config --global user.email "github-actions[bot]@users.noreply.github.com"
-        git clone https://${{ inputs.github_token }}@${{ inputs.gitops_repo }} gitops-repo
+        cp "$FILE" "${FILE}.bak"
 
-    - name: Update manifest tag
-      shell: bash
-      run: |
-        cd gitops-repo
-        sed -i "s|\(image:.*${{ inputs.image_name }}:\).*|\1${TAG}|g" "${{ inputs.manifest_path }}"
-        git add "${{ inputs.manifest_path }}"
-        git commit -m "Update image tag to ${TAG} from PR comment"
-        git push
+        yq eval -i '
+          (.spec.template.spec.containers) |=
+            (map(
+              if (.image // "" | test(env(IMAGE_NAME))) then
+                .image = ((.image // "" | split(":") | .[0]) + ":" + strenv(TAG))
+              else
+                .
+              end
+            ))
+        ' "$FILE"
+
+        git add "$FILE"
+        git commit -m "chore: update $IMAGE_NAME image to $TAG" || true
+
+    - name: Create branch and open PR with changes
+      if: ${{ env.SKIP == 'false' }}
+      id: create_pr
+      uses: peter-evans/create-pull-request@v5
+      working-directory: gitops-repo
+      with:
+        token: ${{ inputs.github_token }}
+        base: ${{ inputs.base_branch }}
+        branch: update-image/${{ inputs.image_name }}-${{ env.TAG }}
+        title: ${{ inputs.pr_title }} - ${{ inputs.image_name }} -> ${{ env.TAG }}
+        body: |
+          Automated PR to update image '${{ inputs.image_name }}' to tag '${{ env.TAG }}'.
+          Source: comment on PR #${{ github.event.issue.number || github.event.pull_request.number || '' }}.
+        commit-message: "chore: update ${{ inputs.image_name }} image to ${{ env.TAG }}"
+        labels: automated,update-image
+
+    - name: Report FAILURE to source PR
+      if: always()
+      uses: actions/github-script@v6
+      env:
+        COMMENT_TOKEN: ${{ env.COMMENT_TOKEN }}
+        ERRFILE: ${{ github.workspace }}/action_error.txt
+      with:
+        github-token: ${{ env.COMMENT_TOKEN }}
+        script: |
+          const fs = require('fs');
+          const errFile = process.env.ERRFILE;
+          const hasError = fs.existsSync(errFile) && fs.readFileSync(errFile,'utf8').trim().length > 0;
+          if (!hasError) {
+            // no error to report
+            return;
+          }
+          let body = ':x: Update image tag action failed.\n\n**Error details:**\n';
+          body += '```\n' + fs.readFileSync(errFile,'utf8') + '\n```\n';
+          await github.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+            body
+          });
+
+    - name: Report SUCCESS to source PR with GitOps PR link
+      if: always()
+      uses: actions/github-script@v6
+      env:
+        COMMENT_TOKEN: ${{ env.COMMENT_TOKEN }}
+        GITOPS_PR_URL: ${{ steps.create_pr.outputs.pull_request_html_url || '' }}
+        ERRFILE: ${{ github.workspace }}/action_error.txt
+      with:
+        github-token: ${{ env.COMMENT_TOKEN }}
+        script: |
+          const fs = require('fs');
+          const errFile = process.env.ERRFILE;
+          const hasError = fs.existsSync(errFile) && fs.readFileSync(errFile,'utf8').trim().length > 0;
+          if (hasError) {
+            // If there was an error, skip success comment (failure was already posted)
+            return;
+          }
+          const prUrl = process.env.GITOPS_PR_URL || '';
+          let body = ':white_check_mark: Update image tag action completed successfully.\n\n';
+          if (prUrl) {
+            body += `Se ha creado/actualizado la PR en el repo GitOps: ${prUrl}\n\n`;
+          } else {
+            body += 'No se creó PR (posiblemente no hubo cambios o la acción de PR devolvió otra respuesta).\n\n';
+          }
+          body += `Requested by comment: \n> ${context.payload.comment && context.payload.comment.body ? context.payload.comment.body : '(contenido no disponible)'}\n`;
+          await github.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+            body
+          });
