@@ -208,10 +208,19 @@ runs:
           }
           let body = ':x: Update image tag action failed.\n\n**Error details:**\n';
           body += '```\n' + fs.readFileSync(errFile,'utf8') + '\n```\n';
-          await github.issues.createComment({
+
+          // determine issue/pr number robustly
+          const issueNumber = context.issue?.number || (context.payload && context.payload.issue && context.payload.issue.number) || (context.payload && context.payload.pull_request && context.payload.pull_request.number);
+          if (!issueNumber) {
+            body += '\n(Note: Unable to determine issue/PR number to comment on.)';
+            console.log('No issue/pr number found in context, aborting comment.');
+            return;
+          }
+
+          await github.rest.issues.createComment({
             owner: context.repo.owner,
             repo: context.repo.repo,
-            issue_number: context.issue.number,
+            issue_number: issueNumber,
             body
           });
 
@@ -240,9 +249,18 @@ runs:
             body += 'No se creó PR (posiblemente no hubo cambios o la acción de PR devolvió otra respuesta).\n\n';
           }
           body += `Requested by comment: \n> ${context.payload.comment && context.payload.comment.body ? context.payload.comment.body : '(contenido no disponible)'}\n`;
-          await github.issues.createComment({
+
+          // determine issue/pr number robustly
+          const issueNumber = context.issue?.number || (context.payload && context.payload.issue && context.payload.issue.number) || (context.payload && context.payload.pull_request && context.payload.pull_request.number);
+          if (!issueNumber) {
+            body += '\n(Note: Unable to determine issue/PR number to comment on.)';
+            console.log('No issue/pr number found in context, aborting comment.');
+            return;
+          }
+
+          await github.rest.issues.createComment({
             owner: context.repo.owner,
             repo: context.repo.repo,
-            issue_number: context.issue.number,
+            issue_number: issueNumber,
             body
           });
