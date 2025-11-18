@@ -34,26 +34,21 @@ runs:
     - name: "Init: set comment token and create error file"
       shell: bash
       run: |
-        # Este step se ejecuta siempre al inicio y garantiza que COMMENT_TOKEN esté disponible para el step
-        # de reporte aunque falle cualquier paso posterior.
         if [ -n "${{ inputs.source_repo_token }}" ]; then
           echo "COMMENT_TOKEN=${{ inputs.source_repo_token }}" >> $GITHUB_ENV
           echo "COMMENT_TOKEN_PROVIDED=true" >> $GITHUB_ENV
         else
-          # fallback to github_token input (útil si se pasa GITHUB_TOKEN desde el workflow)
           echo "COMMENT_TOKEN=${{ inputs.github_token }}" >> $GITHUB_ENV
           echo "COMMENT_TOKEN_PROVIDED=false" >> $GITHUB_ENV
         fi
 
-        # file donde se volcarán mensajes de error desde cualquier step
         ERRFILE="$GITHUB_WORKSPACE/action_error.txt"
-        : > "$ERRFILE"   # limpia/crea el fichero
+        : > "$ERRFILE"
         echo "Initialized COMMENT_TOKEN and cleared $ERRFILE"
 
     - name: Extract tag and target env from comment
       shell: bash
       run: |
-        # Cada step crítico tiene su propio trap que vuelca información en action_error.txt en caso de fallo
         set -euo pipefail
         ERRFILE="$GITHUB_WORKSPACE/action_error.txt"
         trap 'rc=$?; echo "ERROR in step Extract tag and env. exit_code=$rc" >> "$ERRFILE"; echo "Comment body: ${GITHUB_EVENT_COMMENT_BODY:-(no body)}" >> "$ERRFILE"; exit $rc' ERR
@@ -99,18 +94,28 @@ runs:
         token: ${{ inputs.github_token }}
         path: gitops-repo
 
-    - name: Install yq
+    - name: "Install mikefarah yq (v4) and show version"
       if: ${{ env.SKIP == 'false' }}
       shell: bash
       run: |
         set -euo pipefail
-        ERRFILE="$GITHUB_WORKSPACE/action_error.txt"
-        trap 'rc=$?; echo "ERROR installing yq, exit_code=$rc" >> "$ERRFILE"; exit $rc' ERR
-
-        if ! command -v yq >/dev/null 2>&1; then
+        # If yq exists but is not mikefarah's, replace it.
+        if command -v yq >/dev/null 2>&1; then
+          ver=$(yq --version 2>/dev/null || true)
+          echo "Detected yq: $ver"
+          if echo "$ver" | grep -qi 'mikefarah'; then
+            echo "mikefarah yq already installed: $ver"
+          else
+            echo "Different yq binary detected. Installing mikefarah yq v4..."
+            curl -sL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq
+            chmod +x /usr/local/bin/yq
+          fi
+        else
+          echo "Installing mikefarah yq v4..."
           curl -sL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq
           chmod +x /usr/local/bin/yq
         fi
+        yq --version
 
     - name: Validate semantic version for prod (if required)
       if: ${{ env.SKIP == 'false' }}
@@ -140,7 +145,7 @@ runs:
           echo "MANIFEST_PATH=${{ inputs.staging_manifest_path }}" >> $GITHUB_ENV
         fi
 
-    - name: Update manifest image tag using yq
+    - name: Update manifest image tag using yq (safe loop)
       if: ${{ env.SKIP == 'false' }}
       shell: bash
       working-directory: gitops-repo
@@ -160,19 +165,30 @@ runs:
 
         cp "$FILE" "${FILE}.bak"
 
-        yq eval -i '
-          (.spec.template.spec.containers) |=
-            (map(
-              if (.image // "" | test(env(IMAGE_NAME))) then
-                .image = ((.image // "" | split(":") | .[0]) + ":" + strenv(TAG))
-              else
-                .
-              end
-            ))
-        ' "$FILE"
+        # Count containers (works with mikefarah yq v4)
+        cnt=$(yq eval '.spec.template.spec.containers | length' "$FILE") || cnt=0
+        if [ "$cnt" = "null" ]; then cnt=0; fi
+
+        if [ "$cnt" -eq 0 ]; then
+          echo "No containers found in $FILE"
+        else
+          for i in $(seq 0 $((cnt - 1))); do
+            img=$(yq eval ".spec.template.spec.containers[$i].image" "$FILE")
+            if [ "$img" = "null" ] || [ -z "$img" ]; then
+              continue
+            fi
+            if echo "$img" | grep -q "$IMAGE_NAME"; then
+              base="${img%%:*}"
+              new_image="${base}:${TAG}"
+              # Use yq to set the image for the container index
+              yq eval -i ".spec.template.spec.containers[$i].image = \"${new_image}\"" "$FILE"
+              echo "Updated container[$i] image -> $new_image"
+            fi
+          done
+        fi
 
         git add "$FILE"
-        git commit -m "chore: update $IMAGE_NAME image to $TAG" || true
+        git commit -m "chore: update ${IMAGE_NAME} image to ${TAG}" || true
 
     - name: Create branch and open PR with changes
       if: ${{ env.SKIP == 'false' }}
@@ -188,7 +204,6 @@ runs:
           Source: comment on PR #${{ github.event.issue.number || github.event.pull_request.number || '' }}.
         commit-message: "chore: update ${{ inputs.image_name }} image to ${{ env.TAG }}"
         labels: automated,update-image
-        working-directory: gitops-repo
 
     - name: Report FAILURE to source PR
       if: always()
@@ -202,21 +217,15 @@ runs:
           const fs = require('fs');
           const errFile = process.env.ERRFILE;
           const hasError = fs.existsSync(errFile) && fs.readFileSync(errFile,'utf8').trim().length > 0;
-          if (!hasError) {
-            // no error to report
-            return;
-          }
+          if (!hasError) return;
           let body = ':x: Update image tag action failed.\n\n**Error details:**\n';
           body += '```\n' + fs.readFileSync(errFile,'utf8') + '\n```\n';
-
-          // determine issue/pr number robustly
           const issueNumber = context.issue?.number || (context.payload && context.payload.issue && context.payload.issue.number) || (context.payload && context.payload.pull_request && context.payload.pull_request.number);
           if (!issueNumber) {
             body += '\n(Note: Unable to determine issue/PR number to comment on.)';
             console.log('No issue/pr number found in context, aborting comment.');
             return;
           }
-
           await github.rest.issues.createComment({
             owner: context.repo.owner,
             repo: context.repo.repo,
@@ -237,10 +246,7 @@ runs:
           const fs = require('fs');
           const errFile = process.env.ERRFILE;
           const hasError = fs.existsSync(errFile) && fs.readFileSync(errFile,'utf8').trim().length > 0;
-          if (hasError) {
-            // If there was an error, skip success comment (failure was already posted)
-            return;
-          }
+          if (hasError) return;
           const prUrl = process.env.GITOPS_PR_URL || '';
           let body = ':white_check_mark: Update image tag action completed successfully.\n\n';
           if (prUrl) {
@@ -249,15 +255,12 @@ runs:
             body += 'No se creó PR (posiblemente no hubo cambios o la acción de PR devolvió otra respuesta).\n\n';
           }
           body += `Requested by comment: \n> ${context.payload.comment && context.payload.comment.body ? context.payload.comment.body : '(contenido no disponible)'}\n`;
-
-          // determine issue/pr number robustly
           const issueNumber = context.issue?.number || (context.payload && context.payload.issue && context.payload.issue.number) || (context.payload && context.payload.pull_request && context.payload.pull_request.number);
           if (!issueNumber) {
             body += '\n(Note: Unable to determine issue/PR number to comment on.)';
             console.log('No issue/pr number found in context, aborting comment.');
             return;
           }
-
           await github.rest.issues.createComment({
             owner: context.repo.owner,
             repo: context.repo.repo,
