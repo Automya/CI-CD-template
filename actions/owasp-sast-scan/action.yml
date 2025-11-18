@@ -1,0 +1,34 @@
+runs:
+  using: "composite"
+  steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Grant execute permission to Gradle wrapper
+        run: chmod +x ./gradlew
+
+      - name: Build project (skip tests)
+        run: ./gradlew clean build -x test
+        env:
+          MAVEN_USERNAME: ${{MAVEN_USERNAME }}
+          MAVEN_PASSWORD: ${{MAVEN_PASSWORD }}
+      - name: Depcheck
+        uses: dependency-check/Dependency-Check_Action@main
+        id: Depcheck
+        env:
+          JAVA_HOME: /opt/jdk
+        with:
+          project: 'test'
+          path: '.'
+          format: 'HTML'
+          out: 'reports'
+          args: >
+            --failOnCVSS 7
+            --enableRetired
+
+      - name: Upload Test results
+        if: always()
+        uses: actions/upload-artifact@master
+        with:
+           name: Depcheck report
+           path: ${{github.workspace}}/reports
