@@ -1,9 +1,6 @@
 runs:
   using: "composite"
   steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
       - name: Grant execute permission to Gradle wrapper
         run: chmod +x ./gradlew
 
