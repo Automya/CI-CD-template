@@ -116,7 +116,12 @@ runs:
       uses: actions/checkout@v4
       with:
         ref: ${{ steps.context.outputs.branch }}
-
+    - name: Authenticate to GCP using Workload Identity Federation
+      uses: google-github-actions/auth@v1
+      with:
+        create_credentials_file: true
+        workload_identity_provider: "projects/244039780319/locations/global/workloadIdentityPools/github-actions-pool/providers/github-provider-automya"
+        service_account: "github-ci-sa@automya.iam.gserviceaccount.com"
     - name: Build and push image
       if: steps.context.outputs.tag != ''
       id: build
