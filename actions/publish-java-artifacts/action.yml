@@ -4,12 +4,6 @@ description: "Composite action: sube artifacts a Artifacts (repo central). Lee v
 runs:
   using: "composite"
   steps:
-    - name: Setup Java
-      uses: actions/setup-java@v4
-      with:
-        distribution: temurin
-        java-version: '21'
-
     - name: Make Gradle wrapper executable
       run: chmod +x ./gradlew
       shell: bash
