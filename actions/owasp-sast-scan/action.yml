@@ -9,9 +9,6 @@ runs:
 
       - name: Build project (skip tests)
         run: ./gradlew clean build -x test
-        env:
-          MAVEN_USERNAME: ${{MAVEN_USERNAME }}
-          MAVEN_PASSWORD: ${{MAVEN_PASSWORD }}
       - name: Depcheck
         uses: dependency-check/Dependency-Check_Action@main
         id: Depcheck
