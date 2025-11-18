@@ -178,7 +178,6 @@ runs:
       if: ${{ env.SKIP == 'false' }}
       id: create_pr
       uses: peter-evans/create-pull-request@v5
-      working-directory: gitops-repo
       with:
         token: ${{ inputs.github_token }}
         base: ${{ inputs.base_branch }}
@@ -189,6 +188,7 @@ runs:
           Source: comment on PR #${{ github.event.issue.number || github.event.pull_request.number || '' }}.
         commit-message: "chore: update ${{ inputs.image_name }} image to ${{ env.TAG }}"
         labels: automated,update-image
+        working-directory: gitops-repo
 
     - name: Report FAILURE to source PR
       if: always()
