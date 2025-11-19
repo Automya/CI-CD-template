@@ -51,9 +51,16 @@ runs:
       run: |
         set -euo pipefail
         BODY="${{ github.event.comment.body || '' }}"
+        ACTOR="${{ github.event.comment.user.login || '' }}"
         echo "Comentario recibido:"
         echo "$BODY"
         
+        if echo "$ACTOR" | grep -qi '\[bot\]'; then
+          echo "Comentario generado por bot (${ACTOR}). Se ignora para evitar loops."
+          echo "SKIP=true" >> $GITHUB_ENV
+          exit 0
+        fi
+
         if [ -z "$BODY" ]; then
           echo "No hay comentario disponible. Esta acción solo responde a issue_comment."
           echo "SKIP=true" >> $GITHUB_ENV
