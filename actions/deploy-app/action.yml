@@ -17,7 +17,7 @@ inputs:
     description: 'Token con permisos write en el repo destino GitOps (PAT con repo write). Debe pasarse desde el workflow consumidor.'
     required: true
   source_repo_token:
-    description: 'Token para interactuar con la PR de origen (comentarios). Debe pasarse desde el workflow consumidor (por ejemplo: el secreto GITHUB_TOKEN).'
+    description: 'Token para interactuar con la PR de origen (comentarios). Debe pasarse desde el workflow consumidor.'
     required: false
     default: ''
   base_branch:
@@ -149,11 +149,14 @@ runs:
               continue
             fi
             if [ "$cname" = "$CONTAINER_NAME" ]; then
+              # preserve registry and repo, handle digest vs tag
               if echo "$img" | grep -q "@"; then
                 base="${img%%@*}"
               else
+                # remove last :tag — safe parameter expansion (no awk)
                 base="${img%:*}"
               fi
+              # fallback if base somehow empty
               if [ -z "$base" ]; then
                 if echo "$img" | grep -q "@"; then base="${img%%@*}"; else base="${img%:*}"; fi
               fi
