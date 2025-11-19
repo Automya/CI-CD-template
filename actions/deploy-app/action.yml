@@ -142,21 +142,20 @@ runs:
         echo "DEBUG: containers count = $cnt"
 
         if [ "$cnt" -gt 0 ]; then
-          for i in $(seq 0 $((cnt - 1))); do
+          i=0
+          while [ "$i" -lt "$cnt" ]; do
             cname=$(yq eval -r ".spec.template.spec.containers[$i].name // \"\"" "$FILE")
             img=$(yq eval -r ".spec.template.spec.containers[$i].image // \"\"" "$FILE")
             if [ -z "$cname" ] || [ -z "$img" ]; then
+              i=$((i+1))
               continue
             fi
             if [ "$cname" = "$CONTAINER_NAME" ]; then
-              # preserve registry and repo, handle digest vs tag
               if echo "$img" | grep -q "@"; then
                 base="${img%%@*}"
               else
-                # remove last :tag — safe parameter expansion (no awk)
                 base="${img%:*}"
               fi
-              # fallback if base somehow empty
               if [ -z "$base" ]; then
                 if echo "$img" | grep -q "@"; then base="${img%%@*}"; else base="${img%:*}"; fi
               fi
@@ -164,14 +163,34 @@ runs:
               yq eval -i ".spec.template.spec.containers[$i].image = \"${new_image}\"" "$FILE"
               echo "Updated container name='$cname' image -> $new_image"
               changed=1
+              # break   # uncomment if only the first match should be updated
             fi
+            i=$((i+1))
           done
         fi
 
         if [ "$changed" -eq 0 ]; then
-          echo "DEBUG: No container updated via yq. Trying textual fallback for ${CONTAINER_NAME}..."
-          perl -0777 -pe 's{((?:[^\s"\']*/)?'"${CONTAINER_NAME}"')@sha256:[a-fA-F0-9]{64}}{\1:'"${TAG}"'}g' -i "$FILE" || true
-          perl -0777 -pe 's{((?:[^\s"\']*/)?'"${CONTAINER_NAME}"'):[A-Za-z0-9._-]+}{\1:'"${TAG}"'}g' -i "$FILE" || true
+          echo "DEBUG: No container updated via yq. Trying Python fallback for ${CONTAINER_NAME}..."
+          # Python fallback: safer regex replacements (digest -> tag, tag -> tag)
+          python3 - <<'PY'
+import os, re, sys
+fpath = os.environ.get('FILE')
+tag = os.environ.get('TAG','')
+name = os.environ.get('CONTAINER_NAME','')
+if not fpath or not tag or not name:
+    print("PY fallback missing env vars", fpath, tag, name)
+    sys.exit(0)
+s = open(fpath,'r',encoding='utf-8').read()
+# replace digest occurrences: .../NAME@sha256:...
+s2 = re.sub(r'((?:[^\s"\'/]*/)?'+re.escape(name)+r')@sha256:[a-fA-F0-9]{64}', r'\1:'+tag, s)
+# replace explicit tags: .../NAME:OLDTAG
+s2 = re.sub(r'((?:[^\s"\'/]*/)?'+re.escape(name)+r'):[A-Za-z0-9._-]+', r'\1:'+tag, s2)
+if s2 != s:
+    open(fpath,'w',encoding='utf-8').write(s2)
+    print("Python fallback updated file")
+else:
+    print("Python fallback made no changes")
+PY
 
           if git diff --no-ext-diff --quiet --exit-code -- "$FILE"; then
             echo "Textual fallback made no changes."
