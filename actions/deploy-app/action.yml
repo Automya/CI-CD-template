@@ -1,5 +1,5 @@
 name: Update GitOps Image Tag
-description: Modifica el tag de la imagen de un contenedor (buscando por container.name) en un manifiesto Kubernetes, hace commit correctamente y crea/mergea una PR en el repo GitOps. Reporta resultado en la PR de origen.
+description: Modifica el tag de la imagen de un contenedor (buscando por container.name) en un manifiesto Kubernetes, hace commit y crea/mergea una PR en el repo GitOps. Reporta resultado en la PR de origen.
 inputs:
   gitops_repo:
     description: 'Repo destino en formato owner/repo o URL (ej: myorg/gitops o github.com/myorg/gitops.git).'
@@ -11,13 +11,13 @@ inputs:
     description: 'Ruta al manifiesto para prod dentro del repo.'
     required: true
   image_name:
-    description: 'Nombre del contenedor (campo metadata.name) a buscar en spec.template.spec.containers (ej. automya-vending-operation).'
+    description: 'Nombre del contenedor (campo .name) a buscar en spec.template.spec.containers (ej. automya-vending-operation).'
     required: true
   github_token:
-    description: 'Token con permisos write en el repo destino GitOps (PAT con repo write).'
+    description: 'Token con permisos write en el repo destino GitOps (PAT con repo write). Debe pasarse desde el workflow consumidor.'
     required: true
   source_repo_token:
-    description: 'Token para interactuar con la PR de origen (comentarios). Pasar usualmente ${{ secrets.GITHUB_TOKEN }} desde el workflow.'
+    description: 'Token para interactuar con la PR de origen (comentarios). Debe pasarse desde el workflow consumidor (por ejemplo: el secreto GITHUB_TOKEN).'
     required: false
     default: ''
   base_branch:
@@ -132,14 +132,11 @@ runs:
           exit 1
         fi
 
-        # show before (short)
         echo "----- file before -----"
-        sed -n '1,120p' "$FILE" || true
+        sed -n '1,200p' "$FILE" || true
         echo "-----------------------"
 
         changed=0
-
-        # Count containers safely (yq returns null if path absent)
         cnt=$(yq eval '.spec.template.spec.containers | length' "$FILE" 2>/dev/null || echo 0)
         if [ "$cnt" = "null" ]; then cnt=0; fi
         echo "DEBUG: containers count = $cnt"
@@ -152,20 +149,11 @@ runs:
               continue
             fi
             if [ "$cname" = "$CONTAINER_NAME" ]; then
-              # preserve registry and repo, handle digest vs tag
               if echo "$img" | grep -q "@"; then
                 base="${img%%@*}"
               else
-                # remove last :tag (handles registry:port correctly)
-                base="$(echo "$img" | awk -F: '{ if (NF>2) { # registry with port or path with : present, join all but last
-                    last=${NF}; out=$1; for(i=2;i<NF;i++) out=out ":" $i; printf("%s", out)
-                  } else { printf("%s", $1) } }')"
-                # simpler approach if awk fails: fallback to parameter expansion
-                if [ -z "$base" ]; then
-                  base="${img%:*}"
-                fi
+                base="${img%:*}"
               fi
-              # If base is empty for any reason fallback to img without tag/digest
               if [ -z "$base" ]; then
                 if echo "$img" | grep -q "@"; then base="${img%%@*}"; else base="${img%:*}"; fi
               fi
@@ -177,13 +165,9 @@ runs:
           done
         fi
 
-        # If yq path didn't apply (patch or other format), try a conservative textual fallback:
         if [ "$changed" -eq 0 ]; then
           echo "DEBUG: No container updated via yq. Trying textual fallback for ${CONTAINER_NAME}..."
-          # replace patterns with container name and tag/digest
-          # 1) digest -> tag: IMAGE_NAME@sha256:... -> IMAGE_NAME:TAG
           perl -0777 -pe 's{((?:[^\s"\']*/)?'"${CONTAINER_NAME}"')@sha256:[a-fA-F0-9]{64}}{\1:'"${TAG}"'}g' -i "$FILE" || true
-          # 2) explicit tags (last :tag)
           perl -0777 -pe 's{((?:[^\s"\']*/)?'"${CONTAINER_NAME}"'):[A-Za-z0-9._-]+}{\1:'"${TAG}"'}g' -i "$FILE" || true
 
           if git diff --no-ext-diff --quiet --exit-code -- "$FILE"; then
@@ -195,7 +179,7 @@ runs:
         fi
 
         echo "----- file after -----"
-        sed -n '1,120p' "$FILE" || true
+        sed -n '1,200p' "$FILE" || true
         echo "----------------------"
 
         if [ "$changed" -eq 0 ]; then
@@ -204,15 +188,11 @@ runs:
           exit 0
         fi
 
-        # Stage only the updated manifest (do NOT add backups)
         git add -- "$FILE"
-
-        # Ensure there are staged changes
         if git diff --cached --quiet; then
           echo "No staged changes after add; exiting."
           exit 0
         fi
-
         git commit -m "chore: update ${CONTAINER_NAME} image to ${TAG}" || true
         echo "Committed changes locally:"
         git --no-pager log -1 --pretty=oneline
@@ -242,7 +222,6 @@ runs:
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
 
-        # ensure origin is present and fetch base branch robustly (avoid shallow issues)
         git remote set-url origin "https://x-access-token:${TOKEN}@github.com/${owner_repo}.git"
         git fetch --no-tags --prune --depth=50 origin "$BASE" || git fetch origin "$BASE" || true
 
@@ -255,13 +234,11 @@ runs:
         if [ -z "$commits_ahead" ]; then commits_ahead=0; fi
         echo "Commits ahead of origin/$BASE: $commits_ahead"
 
-        # fallback heuristics if rev-list returns 0 erroneously
         if [ "$commits_ahead" -eq 0 ] && [ -n "$origin_base_sha" ] && [ -n "$head_sha" ] && [ "$origin_base_sha" != "$head_sha" ]; then
           echo "WARNING: rev-list returned 0 but HEAD != origin/$BASE. Treating as commits ahead."
           commits_ahead=1
         fi
 
-        # also check last commit message for our expected message
         if [ "$commits_ahead" -eq 0 ]; then
           last_msg="$(git log -1 --pretty=%B 2>/dev/null || echo '')"
           if echo "$last_msg" | grep -q "chore: update ${IMAGE_NAME} image to ${TAG}"; then
@@ -289,11 +266,9 @@ runs:
           exit 0
         fi
 
-        # create branch and push
         git checkout -b "$BRANCH"
         git push --set-upstream origin "$BRANCH"
 
-        # verify remote branch SHA matches HEAD
         remote_sha=$(git ls-remote origin "refs/heads/${BRANCH}" | awk '{print $1}' || echo "")
         head_sha_now=$(git rev-parse HEAD || echo "")
         echo "DEBUG: remote branch sha = $remote_sha"
@@ -305,7 +280,6 @@ runs:
           exit 1
         fi
 
-        # create PR
         api_url="https://api.github.com/repos/${owner_repo}/pulls"
         pr_payload=$(printf '{"title":"%s","head":"%s","base":"%s","body":"%s"}' "$PR_TITLE" "$BRANCH" "$BASE" "$PR_BODY")
         pr_response=$(curl -s -X POST -H "Authorization: token ${TOKEN}" -H "Accept: application/vnd.github+json" "$api_url" -d "$pr_payload")
@@ -320,7 +294,6 @@ runs:
         echo "GITOPS_PR_URL=$pr_html" >> $GITHUB_ENV
         echo "GITOPS_PR_NUMBER=$pr_number" >> $GITHUB_ENV
 
-        # auto-merge
         merge_url="https://api.github.com/repos/${owner_repo}/pulls/${pr_number}/merge"
         merge_payload='{"commit_title":"'"${PR_TITLE}"'","merge_method":"merge"}'
         merge_response=$(curl -s -X PUT -H "Authorization: token ${TOKEN}" -H "Accept: application/vnd.github+json" "$merge_url" -d "$merge_payload")
