@@ -69,8 +69,10 @@ runs:
           exit 0
         fi
 
-        if ! echo "$BODY" | grep -qi '\bdeploy\b'; then
-          echo "Comentario sin comando deploy. Nada que hacer."
+        BODY_NORMALIZED=$(echo "$BODY" | tr '[:upper:]' '[:lower:]' | tr -d '\n\r')
+        
+        if ! echo "$BODY_NORMALIZED" | grep -qE '^[[:space:]]*deploy[[:space:]]+'; then
+          echo "El comentario no empieza con 'deploy'. Esta acción solo procesa comandos que empiezan con 'deploy'."
           echo "SKIP=true" >> $GITHUB_ENV
           exit 0
         fi
@@ -90,14 +92,10 @@ runs:
           ENV_RAW=$(echo "$BODY" | grep -oE 'env:[[:space:]]*([^[:space:]]+)' | sed -E 's/env:[[:space:]]*//i' | head -n1 || echo "")
         fi
 
-        if [ -z "$TAG" ]; then
-          echo "Error: No se encontró el tag. Usa '-t <tag>' o 'tag: <tag>' en el comentario."
-          exit 1
-        fi
-
-        if [ -z "$ENV_RAW" ]; then
-          echo "Error: No se encontró el entorno. Usa '-e <env>' o 'env: <env>' en el comentario."
-          exit 1
+        if [ -z "$TAG" ] || [ -z "$ENV_RAW" ]; then
+          echo "El comentario no tiene el formato correcto. Formato esperado: 'deploy -t <tag> -e <env>' o 'deploy tag: <tag> env: <env>'"
+          echo "SKIP=true" >> $GITHUB_ENV
+          exit 0
         fi
 
         ENV_LOWER=$(echo "$ENV_RAW" | tr '[:upper:]' '[:lower:]')
