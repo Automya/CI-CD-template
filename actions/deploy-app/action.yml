@@ -305,7 +305,7 @@ runs:
         echo "GITOPS_PR_NUMBER=$pr_number" >> $GITHUB_ENV
 
     - name: Report result back to source PR
-      if: always()
+      if: always() && env.SKIP == 'false'
       uses: actions/github-script@v7
       env:
         COMMENT_TOKEN: ${{ env.COMMENT_TOKEN }}
@@ -315,6 +315,14 @@ runs:
         github-token: ${{ env.COMMENT_TOKEN }}
         script: |
           const fs = require('fs');
+          const actor = context.payload.comment?.user?.login || '';
+          const actorType = context.payload.comment?.user?.type || '';
+          
+          if (actorType === 'Bot' || /\[bot\]|bot$/i.test(actor)) {
+            core.info(`Ignorando comentario de bot: ${actor}`);
+            return;
+          }
+          
           const errFile = process.env.ERRFILE;
           const hasError = fs.existsSync(errFile) && fs.readFileSync(errFile, 'utf8').trim().length > 0;
           const prUrl = process.env.GITOPS_PR_URL || '';
