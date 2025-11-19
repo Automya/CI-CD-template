@@ -51,74 +51,55 @@ runs:
       run: |
         set -euo pipefail
         BODY="${{ github.event.comment.body || '' }}"
+        echo "Comentario recibido:"
+        echo "$BODY"
+        
         if [ -z "$BODY" ]; then
           echo "No hay comentario disponible. Esta acción solo responde a issue_comment."
           echo "SKIP=true" >> $GITHUB_ENV
           exit 0
         fi
 
-        export BODY
-        PARSED_ENV="$RUNNER_TEMP/deploy_env.txt"
-        set +e
-        echo "Comentario recibido:"
-        printf '%s\n' "$BODY"
-        python3 <<'PY' > "$PARSED_ENV"
-          import os
-          import re
-          import sys
-
-          body = os.environ.get("BODY", "")
-
-          if not re.search(r'\bdeploy\b', body, re.I):
-              sys.exit(2)
-
-          tag_match = re.search(r'-t\s+([^\s]+)', body, re.I)
-          env_match = re.search(r'-e\s+([^\s]+)', body, re.I)
-
-          if not tag_match:
-              print("No se encontró '-t <tag>' en el comentario.", file=sys.stderr)
-              sys.exit(1)
-          if not env_match:
-              print("No se encontró '-e <env>' en el comentario.", file=sys.stderr)
-              sys.exit(1)
-
-          tag = tag_match.group(1)
-          raw_env = env_match.group(1).lower()
-
-          env_aliases = {
-              'staging': 'staging',
-              'stage': 'staging',
-              'st': 'staging',
-              'stag': 'staging',
-              'stg': 'staging',
-              'prod': 'prod',
-              'production': 'prod',
-              'prd': 'prod'
-          }
-
-          target = env_aliases.get(raw_env)
-          if not target:
-              print(f"Valor de entorno no soportado: {raw_env}", file=sys.stderr)
-              sys.exit(1)
-
-          print(f"DEPLOY_TAG={tag}")
-          print(f"TARGET_ENV={target}")
-          PY
-        status=$?
-        set -e
-
-        if [ "$status" -eq 2 ]; then
+        if ! echo "$BODY" | grep -qi '\bdeploy\b'; then
           echo "Comentario sin comando deploy. Nada que hacer."
           echo "SKIP=true" >> $GITHUB_ENV
           exit 0
-        elif [ "$status" -ne 0 ]; then
-          echo "El comentario debe incluir 'deploy -t <tag> -e <staging|prod>'."
+        fi
+
+        TAG=$(echo "$BODY" | grep -oE '\-t[[:space:]]+([^[:space:]]+)' | sed -E 's/\-t[[:space:]]+//' | head -n1 || echo "")
+        ENV_RAW=$(echo "$BODY" | grep -oE '\-e[[:space:]]+([^[:space:]]+)' | sed -E 's/\-e[[:space:]]+//' | head -n1 || echo "")
+
+        if [ -z "$TAG" ]; then
+          echo "Error: No se encontró '-t <tag>' en el comentario."
           exit 1
         fi
 
-        cat "$PARSED_ENV" >> $GITHUB_ENV
+        if [ -z "$ENV_RAW" ]; then
+          echo "Error: No se encontró '-e <env>' en el comentario."
+          exit 1
+        fi
+
+        ENV_LOWER=$(echo "$ENV_RAW" | tr '[:upper:]' '[:lower:]')
+        case "$ENV_LOWER" in
+          staging|stage|st|stag|stg)
+            TARGET_ENV="staging"
+            ;;
+          prod|production|prd)
+            TARGET_ENV="prod"
+            ;;
+          *)
+            echo "Error: Valor de entorno no soportado: $ENV_RAW (aceptados: staging/stage/st/stag/stg o prod/production/prd)"
+            exit 1
+            ;;
+        esac
+
+        echo "DEPLOY_TAG=$TAG" >> $GITHUB_ENV
+        echo "TARGET_ENV=$TARGET_ENV" >> $GITHUB_ENV
+        echo "SKIP=false" >> $GITHUB_ENV
+        
         echo "Comando detectado:"
-        cat "$PARSED_ENV"
+        echo "  Tag: $TAG"
+        echo "  Entorno: $TARGET_ENV"
 
     - name: Normalize GitOps repository reference
       if: ${{ env.SKIP == 'false' }}
