@@ -66,16 +66,28 @@ runs:
           exit 0
         fi
 
-        TAG=$(echo "$BODY" | grep -oE '\-t[[:space:]]+([^[:space:]]+)' | sed -E 's/\-t[[:space:]]+//' | head -n1 || echo "")
-        ENV_RAW=$(echo "$BODY" | grep -oE '\-e[[:space:]]+([^[:space:]]+)' | sed -E 's/\-e[[:space:]]+//' | head -n1 || echo "")
+        TAG=""
+        ENV_RAW=""
+
+        if echo "$BODY" | grep -qiE '\-t[[:space:]]+'; then
+          TAG=$(echo "$BODY" | grep -oE '\-t[[:space:]]+([^[:space:]]+)' | sed -E 's/\-t[[:space:]]+//' | head -n1 || echo "")
+        elif echo "$BODY" | grep -qiE 'tag:[[:space:]]*'; then
+          TAG=$(echo "$BODY" | grep -oE 'tag:[[:space:]]*([^[:space:]]+)' | sed -E 's/tag:[[:space:]]*//i' | head -n1 || echo "")
+        fi
+
+        if echo "$BODY" | grep -qiE '\-e[[:space:]]+'; then
+          ENV_RAW=$(echo "$BODY" | grep -oE '\-e[[:space:]]+([^[:space:]]+)' | sed -E 's/\-e[[:space:]]+//' | head -n1 || echo "")
+        elif echo "$BODY" | grep -qiE 'env:[[:space:]]*'; then
+          ENV_RAW=$(echo "$BODY" | grep -oE 'env:[[:space:]]*([^[:space:]]+)' | sed -E 's/env:[[:space:]]*//i' | head -n1 || echo "")
+        fi
 
         if [ -z "$TAG" ]; then
-          echo "Error: No se encontró '-t <tag>' en el comentario."
+          echo "Error: No se encontró el tag. Usa '-t <tag>' o 'tag: <tag>' en el comentario."
           exit 1
         fi
 
         if [ -z "$ENV_RAW" ]; then
-          echo "Error: No se encontró '-e <env>' en el comentario."
+          echo "Error: No se encontró el entorno. Usa '-e <env>' o 'env: <env>' en el comentario."
           exit 1
         fi
 
