@@ -189,29 +189,46 @@ runs:
           exit 1
         fi
 
-        current_image=$(yq eval -r ".spec.template.spec.containers[] | select(.name == env(CONTAINER_NAME)).image" "$FILE" | head -n 1)
-        if [ -z "$current_image" ] || [ "$current_image" = "null" ]; then
-          echo "No se encontró el contenedor '${CONTAINER_NAME}' en $FILE" | tee -a "$ERRFILE"
+        container_count=$(yq eval '.spec.template.spec.containers | length' "$FILE" 2>/dev/null || echo "0")
+        if [ "$container_count" = "null" ] || [ "$container_count" = "0" ]; then
+          echo "No se encontraron contenedores en $FILE" | tee -a "$ERRFILE"
           exit 1
         fi
 
-        base="$current_image"
-        if [[ "$base" == *@* ]]; then
-          base="${base%%@*}"
-        elif [[ "$base" == *:* ]]; then
-          base="${base%:*}"
-        fi
-        if [ -z "$base" ]; then
-          base="$current_image"
-        fi
+        found=0
+        i=0
+        while [ "$i" -lt "$container_count" ]; do
+          container_name=$(yq eval -r ".spec.template.spec.containers[$i].name" "$FILE" 2>/dev/null || echo "")
+          if [ "$container_name" = "$CONTAINER_NAME" ]; then
+            current_image=$(yq eval -r ".spec.template.spec.containers[$i].image" "$FILE" 2>/dev/null || echo "")
+            if [ -z "$current_image" ] || [ "$current_image" = "null" ]; then
+              echo "El contenedor '${CONTAINER_NAME}' no tiene imagen definida en $FILE" | tee -a "$ERRFILE"
+              exit 1
+            fi
 
-        NEW_IMAGE="${base}:${TAG}"
-        export NEW_IMAGE
+            base="$current_image"
+            if [[ "$base" == *@* ]]; then
+              base="${base%%@*}"
+            elif [[ "$base" == *:* ]]; then
+              base="${base%:*}"
+            fi
+            if [ -z "$base" ]; then
+              base="$current_image"
+            fi
 
-        yq eval -i '
-          .spec.template.spec.containers |=
-          (map(if .name == env(CONTAINER_NAME) then .image = env(NEW_IMAGE) else . end))
-        ' "$FILE"
+            NEW_IMAGE="${base}:${TAG}"
+            yq eval -i ".spec.template.spec.containers[$i].image = \"${NEW_IMAGE}\"" "$FILE"
+            echo "Actualizado contenedor '${CONTAINER_NAME}': ${current_image} -> ${NEW_IMAGE}"
+            found=1
+            break
+          fi
+          i=$((i + 1))
+        done
+
+        if [ "$found" -eq 0 ]; then
+          echo "No se encontró el contenedor '${CONTAINER_NAME}' en $FILE" | tee -a "$ERRFILE"
+          exit 1
+        fi
 
         if git diff --quiet -- "$FILE"; then
           echo "El manifiesto ya estaba en ${NEW_IMAGE}. Nada que hacer."
