@@ -302,6 +302,37 @@ runs:
         echo "GITOPS_PR_URL=$pr_url" >> $GITHUB_ENV
         echo "GITOPS_PR_NUMBER=$pr_number" >> $GITHUB_ENV
 
+        echo "PR creada: $pr_url (número: $pr_number)"
+        echo "Haciendo merge automático..."
+
+        merge_url="https://api.github.com/repos/${owner_repo}/pulls/${pr_number}/merge"
+        merge_payload='{"commit_title":"'"${PR_TITLE}"'","merge_method":"merge"}'
+        merge_response=$(curl -sS -X PUT -H "Authorization: token ${TOKEN}" \
+          -H "Accept: application/vnd.github+json" "$merge_url" -d "$merge_payload")
+        
+        merged=$(printf '%s' "$merge_response" | python3 -c 'import json,sys; j=json.load(sys.stdin); print(str(j.get("merged", False)).lower())' 2>/dev/null || echo "false")
+        
+        if [ "$merged" = "true" ]; then
+          echo "PR mergeada exitosamente."
+          
+          echo "Eliminando rama ${BRANCH}..."
+          delete_branch_url="https://api.github.com/repos/${owner_repo}/git/refs/heads/${BRANCH}"
+          delete_response=$(curl -sS -X DELETE -H "Authorization: token ${TOKEN}" \
+            -H "Accept: application/vnd.github+json" "$delete_branch_url" 2>&1)
+          
+          if echo "$delete_response" | grep -q '"message":"Not Found"'; then
+            echo "La rama ya fue eliminada o no existe."
+          elif [ -n "$delete_response" ] && ! echo "$delete_response" | grep -qE '^\{|^\['; then
+            echo "Rama eliminada exitosamente."
+          else
+            echo "Advertencia: No se pudo eliminar la rama (puede que ya esté eliminada): $delete_response"
+          fi
+        else
+          error_msg=$(printf '%s' "$merge_response" | python3 -c 'import json,sys; j=json.load(sys.stdin); print(j.get("message","Error desconocido"))' 2>/dev/null || echo "Error al hacer merge")
+          echo "No se pudo hacer merge automático: $error_msg" | tee -a "$ERRFILE"
+          echo "Respuesta completa: $merge_response" | tee -a "$ERRFILE"
+        fi
+
     - name: Report result back to source PR
       if: always() && env.SKIP == 'false'
       uses: actions/github-script@v7
