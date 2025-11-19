@@ -51,14 +51,12 @@ runs:
       run: |
         set -euo pipefail
         BODY="${{ github.event.comment.body || '' }}"
-        ACTOR="${{ github.event.comment.user.login || '' }}"
-        ACTOR_TYPE="${{ github.event.comment.user.type || '' }}"
         
-        echo "Comentario recibido de: $ACTOR (tipo: $ACTOR_TYPE)"
-        echo "Contenido: $BODY"
+        echo "Comentario recibido:"
+        echo "$BODY"
         
-        if [ "$ACTOR_TYPE" = "Bot" ] || echo "$ACTOR" | grep -qiE '\[bot\]|bot$'; then
-          echo "Comentario generado por bot (${ACTOR}). Se ignora para evitar loops infinitos."
+        if echo "$BODY" | grep -qE '^[:white_check_mark:]|^[:x:]|^Imagen actualizada|^No se pudo actualizar'; then
+          echo "El comentario parece ser una respuesta automática de esta acción. Se ignora para evitar loops infinitos."
           echo "SKIP=true" >> $GITHUB_ENV
           exit 0
         fi
@@ -69,31 +67,20 @@ runs:
           exit 0
         fi
 
-        BODY_NORMALIZED=$(echo "$BODY" | tr '[:upper:]' '[:lower:]' | tr -d '\n\r')
+        BODY_TRIMMED=$(echo "$BODY" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
         
-        if ! echo "$BODY_NORMALIZED" | grep -qE '^[[:space:]]*deploy[[:space:]]+'; then
-          echo "El comentario no empieza con 'deploy'. Esta acción solo procesa comandos que empiezan con 'deploy'."
+        if ! echo "$BODY_TRIMMED" | grep -qiE '^deploy[[:space:]]+-t[[:space:]]+[^[:space:]]+[[:space:]]+-e[[:space:]]+(staging|stage|st|stag|stg|prod|production|prd)'; then
+          echo "El comentario no tiene el formato exacto requerido."
+          echo "Formato esperado: 'deploy -t <tag> -e <staging|prod>' (en ese orden exacto)"
           echo "SKIP=true" >> $GITHUB_ENV
           exit 0
         fi
 
-        TAG=""
-        ENV_RAW=""
-
-        if echo "$BODY" | grep -qiE '\-t[[:space:]]+'; then
-          TAG=$(echo "$BODY" | grep -oE '\-t[[:space:]]+([^[:space:]]+)' | sed -E 's/\-t[[:space:]]+//' | head -n1 || echo "")
-        elif echo "$BODY" | grep -qiE 'tag:[[:space:]]*'; then
-          TAG=$(echo "$BODY" | grep -oE 'tag:[[:space:]]*([^[:space:]]+)' | sed -E 's/tag:[[:space:]]*//i' | head -n1 || echo "")
-        fi
-
-        if echo "$BODY" | grep -qiE '\-e[[:space:]]+'; then
-          ENV_RAW=$(echo "$BODY" | grep -oE '\-e[[:space:]]+([^[:space:]]+)' | sed -E 's/\-e[[:space:]]+//' | head -n1 || echo "")
-        elif echo "$BODY" | grep -qiE 'env:[[:space:]]*'; then
-          ENV_RAW=$(echo "$BODY" | grep -oE 'env:[[:space:]]*([^[:space:]]+)' | sed -E 's/env:[[:space:]]*//i' | head -n1 || echo "")
-        fi
+        TAG=$(echo "$BODY" | grep -oE '\-t[[:space:]]+([^[:space:]]+)' | sed -E 's/\-t[[:space:]]+//' | head -n1 || echo "")
+        ENV_RAW=$(echo "$BODY" | grep -oE '\-e[[:space:]]+([^[:space:]]+)' | sed -E 's/\-e[[:space:]]+//' | head -n1 || echo "")
 
         if [ -z "$TAG" ] || [ -z "$ENV_RAW" ]; then
-          echo "El comentario no tiene el formato correcto. Formato esperado: 'deploy -t <tag> -e <env>' o 'deploy tag: <tag> env: <env>'"
+          echo "No se pudo extraer el tag o el entorno del comentario."
           echo "SKIP=true" >> $GITHUB_ENV
           exit 0
         fi
@@ -258,7 +245,7 @@ runs:
       run: |
         set -euo pipefail
         ERRFILE="$GITHUB_WORKSPACE/action_error.txt"
-        trap 'rc=$?; echo "ERROR creando PR/push (exit $rc)" >> "$ERRFILE"; exit $rc' ERR
+        trap 'rc=$?; echo "ERROR creando PR/push - exit code $rc" >> "$ERRFILE"; exit $rc' ERR
 
         owner_repo="${{ env.GITOPS_REPO }}"
         TOKEN="${{ inputs.github_token }}"
@@ -344,11 +331,10 @@ runs:
         github-token: ${{ env.COMMENT_TOKEN }}
         script: |
           const fs = require('fs');
-          const actor = context.payload.comment?.user?.login || '';
-          const actorType = context.payload.comment?.user?.type || '';
+          const commentBody = context.payload.comment?.body || '';
           
-          if (actorType === 'Bot' || /\[bot\]|bot$/i.test(actor)) {
-            core.info(`Ignorando comentario de bot: ${actor}`);
+          if (/^[:white_check_mark:]|^[:x:]|^Imagen actualizada|^No se pudo actualizar/i.test(commentBody)) {
+            core.info('El comentario parece ser una respuesta automática. No se publicará respuesta para evitar loops.');
             return;
           }
           
@@ -366,10 +352,6 @@ runs:
           } else {
             body = ':white_check_mark: El manifiesto ya estaba actualizado; no se creó PR.\n';
           }
-          body += '\nComentario original:\n> ' +
-            (context.payload.comment && context.payload.comment.body
-              ? context.payload.comment.body
-              : '(sin contenido)');
 
           const issueNumber = context.issue?.number ||
             context.payload?.issue?.number ||
