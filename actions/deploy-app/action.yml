@@ -327,6 +327,8 @@ runs:
         COMMENT_TOKEN: ${{ env.COMMENT_TOKEN }}
         ERRFILE: ${{ github.workspace }}/action_error.txt
         GITOPS_PR_URL: ${{ env.GITOPS_PR_URL }}
+        DEPLOY_TAG: ${{ env.DEPLOY_TAG }}
+        TARGET_ENV: ${{ env.TARGET_ENV }}
       with:
         github-token: ${{ env.COMMENT_TOKEN }}
         script: |
@@ -341,16 +343,18 @@ runs:
           const errFile = process.env.ERRFILE;
           const hasError = fs.existsSync(errFile) && fs.readFileSync(errFile, 'utf8').trim().length > 0;
           const prUrl = process.env.GITOPS_PR_URL || '';
+          const deployTag = process.env.DEPLOY_TAG || '(tag no disponible)';
+          const targetEnv = process.env.TARGET_ENV || '(entorno no disponible)';
           let body = '';
           if (hasError) {
-            body = ':x: No se pudo actualizar el manifiesto.\n\n```\n' +
+            body = `:x: El despliegue del tag \`${deployTag}\` a \`${targetEnv}\` falló.\n\n```\n` +
               fs.readFileSync(errFile, 'utf8') + '\n```\n';
             if (prUrl) body += `Se alcanzó a crear la PR en GitOps: ${prUrl}\n`;
           } else if (prUrl) {
-            body = ':white_check_mark: Imagen actualizada en GitOps.\n' +
-              `PR creada: ${prUrl}\n`;
+            body = `:white_check_mark: Tag \`${deployTag}\` desplegado en \`${targetEnv}\`.\n` +
+              `PR en GitOps: ${prUrl}\n`;
           } else {
-            body = ':white_check_mark: El manifiesto ya estaba actualizado; no se creó PR.\n';
+            body = `:white_check_mark: Tag \`${deployTag}\` ya estaba aplicado en \`${targetEnv}\`; no se creó PR.\n`;
           }
 
           const issueNumber = context.issue?.number ||
