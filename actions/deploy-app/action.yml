@@ -52,11 +52,13 @@ runs:
         set -euo pipefail
         BODY="${{ github.event.comment.body || '' }}"
         ACTOR="${{ github.event.comment.user.login || '' }}"
-        echo "Comentario recibido:"
-        echo "$BODY"
+        ACTOR_TYPE="${{ github.event.comment.user.type || '' }}"
         
-        if echo "$ACTOR" | grep -qi '\[bot\]'; then
-          echo "Comentario generado por bot (${ACTOR}). Se ignora para evitar loops."
+        echo "Comentario recibido de: $ACTOR (tipo: $ACTOR_TYPE)"
+        echo "Contenido: $BODY"
+        
+        if [ "$ACTOR_TYPE" = "Bot" ] || echo "$ACTOR" | grep -qiE '\[bot\]|bot$'; then
+          echo "Comentario generado por bot (${ACTOR}). Se ignora para evitar loops infinitos."
           echo "SKIP=true" >> $GITHUB_ENV
           exit 0
         fi
