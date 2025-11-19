@@ -28,6 +28,14 @@ inputs:
     description: 'Título de la PR.'
     required: false
     default: 'chore: update image tag'
+  tag:
+    description: 'Tag de imagen explícito. Si se define, tiene prioridad sobre lo indicado en comentarios.'
+    required: false
+    default: ''
+  target_env:
+    description: "Forzar entorno objetivo (staging/prod). Si no se establece se infiere del comentario."
+    required: false
+    default: ''
 runs:
   using: composite
   steps:
@@ -44,15 +52,25 @@ runs:
         : > "$GITHUB_WORKSPACE/action_error.txt"
         echo "Initialized COMMENT_TOKEN and cleared action_error.txt"
 
-    - name: "Extract tag and target env from comment"
+    - name: "Resolve tag and target environment"
       shell: bash
       run: |
         set -euo pipefail
         BODY="${{ github.event.comment.body || '' }}"
-        TAG=$(echo "$BODY" | grep -oP '(?i)tag:\s*\K[^\s]+' | head -n1 || true)
-        ENV=$(echo "$BODY" | grep -oP '(?i)env:\s*\K(staging|stage|st|prod|production|prd)\b' | head -n1 || true)
-        if [ -z "$ENV" ]; then
-          ENV=$(echo "$BODY" | grep -oP '(?i)\b(staging|stage|st|prod|production|prd)\b' | head -n1 || true)
+        TAG_INPUT="${{ inputs.tag }}"
+        ENV_INPUT="${{ inputs.target_env }}"
+        TAG="$TAG_INPUT"
+        if [ -z "$TAG" ]; then
+          TAG=$(echo "$BODY" | grep -oP '(?i)tag:\s*\K[^\s]+' | head -n1 || true)
+        fi
+        ENV=""
+        if [ -n "$ENV_INPUT" ]; then
+          ENV="$ENV_INPUT"
+        else
+          ENV=$(echo "$BODY" | grep -oP '(?i)env:\s*\K(staging|stage|st|prod|production|prd)\b' | head -n1 || true)
+          if [ -z "$ENV" ]; then
+            ENV=$(echo "$BODY" | grep -oP '(?i)\b(staging|stage|st|prod|production|prd)\b' | head -n1 || true)
+          fi
         fi
         if [ -n "$ENV" ]; then
           env_lc=$(echo "$ENV" | tr '[:upper:]' '[:lower:]')
@@ -65,7 +83,7 @@ runs:
           TARGET_ENV="staging"
         fi
         if [ -z "$TAG" ]; then
-          echo "No tag found in comment. Skipping."
+          echo "No tag provided via input or comment. Skipping."
           echo "SKIP=true" >> $GITHUB_ENV
           exit 0
         fi
@@ -74,11 +92,37 @@ runs:
         echo "SKIP=false" >> $GITHUB_ENV
         echo "Found TAG=$TAG for env=$TARGET_ENV"
 
+    - name: "Normalize GitOps repository reference"
+      if: ${{ env.SKIP == 'false' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        RAW_REPO="${{ inputs.gitops_repo }}"
+        if [ -z "$RAW_REPO" ]; then
+          echo "gitops_repo no puede estar vacío"
+          exit 1
+        fi
+        cleaned="$RAW_REPO"
+        cleaned="${cleaned#https://github.com/}"
+        cleaned="${cleaned#http://github.com/}"
+        cleaned="${cleaned#github.com/}"
+        cleaned="${cleaned#git@github.com:}"
+        cleaned="${cleaned#git@www.github.com:}"
+        cleaned="${cleaned#www.github.com/}"
+        cleaned="${cleaned#/}"
+        cleaned="${cleaned%.git}"
+        if ! echo "$cleaned" | grep -q '/'; then
+          echo "No se pudo normalizar el repo GitOps (se esperaba owner/repo), valor actual: $cleaned"
+          exit 1
+        fi
+        echo "GITOPS_REPO_OWNER_AND_NAME=$cleaned" >> $GITHUB_ENV
+        echo "Normalizado gitops_repo a $cleaned"
+
     - name: "Checkout GitOps repository"
       if: ${{ env.SKIP == 'false' }}
       uses: actions/checkout@v4
       with:
-        repository: ${{ inputs.gitops_repo }}
+        repository: ${{ env.GITOPS_REPO_OWNER_AND_NAME }}
         token: ${{ inputs.github_token }}
         path: gitops-repo
 
@@ -106,11 +150,12 @@ runs:
       shell: bash
       run: |
         if [ "${{ env.TARGET_ENV }}" = "prod" ]; then
-          echo "MANIFEST_PATH=${{ inputs.prod_manifest_path }}" >> $GITHUB_ENV
+          manifest="${{ inputs.prod_manifest_path }}"
         else
-          echo "MANIFEST_PATH=${{ inputs.staging_manifest_path }}" >> $GITHUB_ENV
+          manifest="${{ inputs.staging_manifest_path }}"
         fi
-        echo "Using MANIFEST_PATH=${MANIFEST_PATH}"
+        echo "MANIFEST_PATH=${manifest}" >> $GITHUB_ENV
+        echo "Using MANIFEST_PATH=${manifest}"
 
     - name: "Update container image by container.name (yq) and commit if changed"
       if: ${{ env.SKIP == 'false' }}
@@ -228,12 +273,7 @@ PY
         ERRFILE="$GITHUB_WORKSPACE/action_error.txt"
         trap 'rc=$?; echo "ERROR creating PR/pushing, exit_code=$rc" >> "$ERRFILE"; exit $rc' ERR
 
-        IN_REPO="${{ inputs.gitops_repo }}"
-        if echo "$IN_REPO" | grep -qi "github.com"; then
-          owner_repo=$(echo "$IN_REPO" | sed -E 's#(https?://)?(www\.)?github.com/##I' | sed -E 's#\.git$##I')
-        else
-          owner_repo="$IN_REPO"
-        fi
+        owner_repo="${{ env.GITOPS_REPO_OWNER_AND_NAME }}"
 
         TOKEN="${{ inputs.github_token }}"
         BRANCH="update-image/${{ inputs.image_name }}-${{ env.TAG }}"
@@ -288,8 +328,8 @@ PY
           exit 0
         fi
 
-        git checkout -b "$BRANCH"
-        git push --set-upstream origin "$BRANCH"
+        git checkout -B "$BRANCH"
+        git push --force-with-lease origin "$BRANCH"
 
         remote_sha=$(git ls-remote origin "refs/heads/${BRANCH}" | awk '{print $1}' || echo "")
         head_sha_now=$(git rev-parse HEAD || echo "")
