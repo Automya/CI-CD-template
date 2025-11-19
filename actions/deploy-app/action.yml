@@ -61,20 +61,20 @@ runs:
         PARSED_ENV="$RUNNER_TEMP/deploy_env.txt"
         set +e
         python3 <<'PY' > "$PARSED_ENV"
-        import os, re, sys
-        body = os.environ.get("BODY", "")
-        if not re.search(r'\bdeploy\b', body, re.I):
-            sys.exit(2)
-        tag_match = re.search(r'-t\s+([A-Za-z0-9._-]+)', body)
-        env_match = re.search(r'-e\s+(staging|stage|st|prod|production|prd)', body, re.I)
-        if not tag_match or not env_match:
-            sys.exit(1)
-        tag = tag_match.group(1)
-        raw_env = env_match.group(1).lower()
-        target = 'prod' if raw_env in ('prod', 'production', 'prd') else 'staging'
-        print(f"DEPLOY_TAG={tag}")
-        print(f"TARGET_ENV={target}")
-        PY
+import os, re, sys
+body = os.environ.get("BODY", "")
+if not re.search(r'\bdeploy\b', body, re.I):
+    sys.exit(2)
+tag_match = re.search(r'-t\s+([A-Za-z0-9._-]+)', body)
+env_match = re.search(r'-e\s+(staging|stage|st|stag|prod|production|prd)', body, re.I)
+if not tag_match or not env_match:
+    sys.exit(1)
+tag = tag_match.group(1)
+raw_env = env_match.group(1).lower()
+target = 'prod' if raw_env in ('prod', 'production', 'prd') else 'staging'
+print(f"DEPLOY_TAG={tag}")
+print(f"TARGET_ENV={target}")
+PY
         status=$?
         set -e
 
