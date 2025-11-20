@@ -1,0 +1,65 @@
+name: publish-components
+description: "Composite action: Publica paquetes npm al registro de GitHub Packages. Lee variables del entorno del job consumidor."
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION || '20' }}
+
+    - name: Configure npm registry for GitHub Packages
+      shell: bash
+      run: |
+        # Configurar el registro de GitHub Packages para el scope @automya
+        # Las variables de entorno esperadas:
+        # - GITHUB_REGISTRY_URL: URL del registro (default: npm.pkg.github.com)
+        # - GITHUB_REPOSITORY_OWNER: Owner del repositorio (default: github.repository_owner)
+        # - NPM_AUTH_TOKEN: Token de autenticación (típicamente secrets.GITHUB_TOKEN)
+        # - NPM_SCOPE: Scope del paquete npm (default: @automya)
+
+        REGISTRY_URL="${GITHUB_REGISTRY_URL:-npm.pkg.github.com}"
+        REPO_OWNER="${GITHUB_REPOSITORY_OWNER:-${{ github.repository_owner }}}"
+        SCOPE="${NPM_SCOPE:-@automya}"
+
+        echo "Configurando registro npm para GitHub Packages..."
+        echo "Registry: ${REGISTRY_URL}"
+        echo "Owner: ${REPO_OWNER}"
+        echo "Scope: ${SCOPE}"
+
+        # Crear/actualizar .npmrc con la configuración del registro
+        echo "${SCOPE}:registry=https://${REGISTRY_URL}/" > .npmrc
+        echo "//${REGISTRY_URL}/:_authToken=${NPM_AUTH_TOKEN}" >> .npmrc
+
+        # Configurar también para el usuario (por si acaso)
+        echo "${SCOPE}:registry=https://${REGISTRY_URL}/" >> ~/.npmrc
+        echo "//${REGISTRY_URL}/:_authToken=${NPM_AUTH_TOKEN}" >> ~/.npmrc
+
+        echo "✅ Configuración del registro completada"
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        echo "Instalando dependencias..."
+        npm ci
+        echo "✅ Dependencias instaladas"
+
+    - name: Build package (if build script exists)
+      shell: bash
+      run: |
+        # Verificar si existe un script de build en package.json
+        if npm run | grep -q "build"; then
+          echo "Script 'build' encontrado, ejecutando build..."
+          npm run build
+          echo "✅ Build completado"
+        else
+          echo "ℹ️  No se encontró script 'build', omitiendo..."
+        fi
+
+    - name: Publish to GitHub Packages
+      shell: bash
+      run: |
+        echo "Publicando paquete a GitHub Packages..."
+        npm publish
+        echo "✅ Paquete publicado exitosamente"
