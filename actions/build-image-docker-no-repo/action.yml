@@ -1,9 +1,23 @@
 name: "GCP Docker Build & Push with PR feedback"
-description: "Builds and pushes Docker images to GCP Artifact Registry and report status to PR comments, sin credenciales Maven."
+description: "Builds and pushes Docker images to GCP Artifact Registry using Workload Identity Federation and reports back to PR comments in PRs."
 
 runs:
   using: "composite"
   steps:
+    - name: begin notification
+      if: github.event_name == 'issue_comment'
+      shell: bash
+      run: |
+        PR_NUMBER=$(jq -r '.issue.number // empty' < "$GITHUB_EVENT_PATH")
+        comment() {
+          MSG="$1"
+          curl -s -H "Authorization: token $GH_TOKEN" \
+            -X POST \
+            -d "{\"body\":\"$MSG\"}" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" > /dev/null
+        }
+        comment "🚀 Iniciando Build, espere por favor..."
+
     - name: Checkout code
       uses: actions/checkout@v4
 
@@ -67,15 +81,22 @@ runs:
           else
             LOGICAL_STATUS="not_build_command"
           fi
+
           if [[ -z "$BRANCH" ]]; then
             PR_URL=$(jq -r '.issue.pull_request.url // empty' < "$GITHUB_EVENT_PATH")
             BRANCH=$(curl -s -H "Authorization: token $GH_TOKEN" "$PR_URL" | jq -r .head.ref)
           fi
+
           SAFE_BRANCH=$(echo "$BRANCH" | tr '/' '-')
+
           is_semver() { [[ "$1" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; }
+
+          # El TAG siempre será el SAFE_BRANCH si no está explícito
           if [[ -z "$TAG" && -n "$BRANCH" ]]; then
             TAG="$SAFE_BRANCH"
           fi
+
+          # Chequeo de errores lógicos
           if [[ "$BRANCH" == "main" && -n "$TAG" && "$TAG" != "MAIN" ]]; then
             if ! is_semver "$TAG"; then
               LOGICAL_STATUS="invalid_tag_main"
@@ -97,6 +118,7 @@ runs:
           LOGICAL_STATUS="not_supported_event"
         fi
 
+        # Para checkout y trabajo, usar la rama real (BRANCH), para el tag docker el "SAFE_BRANCH"
         echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
         echo "safe_branch=$SAFE_BRANCH" >> "$GITHUB_OUTPUT"
         echo "tag=$TAG" >> "$GITHUB_OUTPUT"
@@ -108,7 +130,12 @@ runs:
       uses: actions/checkout@v4
       with:
         ref: ${{ steps.context.outputs.branch }}
-
+    - name: Authenticate to GCP using Workload Identity Federation
+      uses: google-github-actions/auth@v1
+      with:
+        create_credentials_file: true
+        workload_identity_provider: "projects/244039780319/locations/global/workloadIdentityPools/github-actions-pool/providers/github-provider-automya"
+        service_account: "github-ci-sa@automya.iam.gserviceaccount.com"
     - name: Build and push image
       if: steps.context.outputs.tag != ''
       id: build
@@ -124,7 +151,8 @@ runs:
         FULL_IMAGE="$GCP_REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$IMAGE_NAME:$TAG"
 
         set +e  # Desactiva 'exit on error'
-        docker build -t "$FULL_IMAGE" .
+        docker build \
+          -t "$FULL_IMAGE" .
         BUILD_STATUS=$?
 
         if [ $BUILD_STATUS -ne 0 ]; then
@@ -151,6 +179,7 @@ runs:
         STATUS="${{ steps.build.outputs.status }}"
         TAG="${{ steps.context.outputs.tag }}"
         IMAGE="$GCP_REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$IMAGE_NAME:$TAG"
+
         comment() {
           MSG="$1"
           curl -s -H "Authorization: token $GH_TOKEN" \
@@ -183,8 +212,5 @@ runs:
             ;;
           "success")
             comment "🎉 Éxito: Imagen ${IMAGE} subida correctamente. [Ver ejecución completa]($JOB_URL)"
-            ;;
-          *)
-            comment "🚀 Build iniciado con tag ${TAG}. [Ver ejecución]($JOB_URL)"
             ;;
         esac
