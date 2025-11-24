@@ -42,20 +42,8 @@ runs:
       shell: bash
       run: |
         echo "Instalando dependencias..."
-        npm ci
+        npm i
         echo "✅ Dependencias instaladas"
-
-    - name: Build package (if build script exists)
-      shell: bash
-      run: |
-        # Verificar si existe un script de build en package.json
-        if npm run | grep -q "build"; then
-          echo "Script 'build' encontrado, ejecutando build..."
-          npm run build
-          echo "✅ Build completado"
-        else
-          echo "ℹ️  No se encontró script 'build', omitiendo..."
-        fi
 
     - name: Publish to GitHub Packages
       shell: bash
