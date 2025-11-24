@@ -70,9 +70,9 @@ runs:
           fi
         }
 
-        if [[ "$EVENT" == "push" && "${{ github.ref }}" == "refs/heads/dev" ]]; then
-          TAG="dev"
-          BRANCH="dev"
+        if [[ "$EVENT" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
+          TAG="main"
+          BRANCH="main"
 
         elif [[ "$EVENT" == "issue_comment" && "$(jq -r '.issue.pull_request // empty' < "$GITHUB_EVENT_PATH")" != "" ]]; then
           if [[ "$CLEAN_BODY" =~ ^[Bb]uild($|[[:space:]]) ]]; then
@@ -97,11 +97,11 @@ runs:
           fi
 
           # Chequeo de errores lógicos
-          if [[ "$BRANCH" == "dev" && -n "$TAG" && "$TAG" != "dev" ]]; then
+          if [[ "$BRANCH" == "main" && -n "$TAG" && "$TAG" != "main" ]]; then
             if ! is_semver "$TAG"; then
-              LOGICAL_STATUS="invalid_tag_dev"
+              LOGICAL_STATUS="invalid_tag_main"
             fi
-          elif [[ "$BRANCH" != "dev" && -n "$TAG" ]]; then
+          elif [[ "$BRANCH" != "main" && -n "$TAG" ]]; then
             if is_semver "$TAG"; then
               LOGICAL_STATUS="invalid_tag_branch"
             fi
@@ -110,9 +110,9 @@ runs:
         elif [[ "$EVENT" == "release" && "${GITHUB_REF}" =~ ^refs/tags/v ]]; then
           TAG="${{ github.event.release.tag_name }}"
           BRANCH="${{ github.event.release.target_commitish }}"
-          if [[ "$BRANCH" != "dev" ]]; then
+          if [[ "$BRANCH" != "main" ]]; then
             LOGICAL_STATUS="invalid_release_branch"
-            comment_pr "❌ Error: Release con tag ${TAG} no apunta a dev. [Ver logs]($JOB_URL)"
+            comment_pr "❌ Error: Release con tag ${TAG} no apunta a main. [Ver logs]($JOB_URL)"
           fi
         else
           LOGICAL_STATUS="not_supported_event"
@@ -192,14 +192,14 @@ runs:
           "not_build_command")
             comment "❌ Error: El comando del comentario debe empezar con 'build'."
             ;;
-          "invalid_tag_dev")
-            comment "❌ Error: Solo se permiten tags semánticos (v1.2.3) en dev. [Ver logs del job]($JOB_URL)"
+          "invalid_tag_main")
+            comment "❌ Error: Solo se permiten tags semánticos (v1.2.3) en main. [Ver logs del job]($JOB_URL)"
             ;;
           "invalid_tag_branch")
-            comment "❌ Error: Tags semánticos solo están permitidos en dev. [Ver logs del job]($JOB_URL)"
+            comment "❌ Error: Tags semánticos solo están permitidos en main. [Ver logs del job]($JOB_URL)"
             ;;
           "invalid_release_branch")
-            comment "❌ Error: Release con tag no apunta a dev. [Ver logs del job]($JOB_URL)"
+            comment "❌ Error: Release con tag no apunta a main. [Ver logs del job]($JOB_URL)"
             ;;
           "not_supported_event")
             comment "❌ Error: Tipo de evento no soportado."
