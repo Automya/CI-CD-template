@@ -17,7 +17,7 @@ runs:
             "https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" > /dev/null
         }
         comment "🚀 Iniciando Build, espere por favor..."
-
+dev
     - name: Checkout code
       uses: actions/checkout@v4
 
@@ -71,7 +71,7 @@ runs:
         }
 
         if [[ "$EVENT" == "push" && "${{ github.ref }}" == "refs/heads/dev" ]]; then
-          TAG="DEV"
+          TAG="dev"
           BRANCH="dev"
 
         elif [[ "$EVENT" == "issue_comment" && "$(jq -r '.issue.pull_request // empty' < "$GITHUB_EVENT_PATH")" != "" ]]; then
@@ -97,7 +97,7 @@ runs:
           fi
 
           # Chequeo de errores lógicos
-          if [[ "$BRANCH" == "dev" && -n "$TAG" && "$TAG" != "DEV" ]]; then
+          if [[ "$BRANCH" == "dev" && -n "$TAG" && "$TAG" != "dev" ]]; then
             if ! is_semver "$TAG"; then
               LOGICAL_STATUS="invalid_tag_dev"
             fi
