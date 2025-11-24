@@ -17,7 +17,7 @@ runs:
             "https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" > /dev/null
         }
         comment "🚀 Iniciando Build, espere por favor..."
-dev
+
     - name: Checkout code
       uses: actions/checkout@v4
 
