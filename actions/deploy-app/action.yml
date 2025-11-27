@@ -370,7 +370,7 @@ runs:
         set -euo pipefail
         echo "Reiniciando deployment '$DEPLOYMENT_NAME' en namespace '$K8S_NAMESPACE'..."
         kubectl rollout restart deployment/"$DEPLOYMENT_NAME" -n "$K8S_NAMESPACE"
-        kubectl rollout status deployment/"$DEPLOYMENT_NAME" -n "$K8S_NAMESPACE" --timeout=120s
+        kubectl rollout status deployment/"$DEPLOYMENT_NAME" -n "$K8S_NAMESPACE"
         echo "RESTART_SUCCESS=true" >> $GITHUB_ENV
 
     - name: Report result back to source PR
