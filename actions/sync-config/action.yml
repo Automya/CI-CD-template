@@ -142,25 +142,27 @@ runs:
           PR_NUMBER="${{ github.event.pull_request.number }}"
         fi
         
+        SOURCE_REPO=""
+        CHECKOUT_REF=""
+
         if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "null" ]; then
            echo "Fetching PR #$PR_NUMBER details..."
            API_URL="https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER"
-           PR_DATA=$(curl -sS -H "Authorization: token ${{ inputs.github_token }}" -H "Accept: application/vnd.github+json" "$API_URL")
+           # Use || true to prevent exit on 404 if set -e is on
+           PR_DATA=$(curl -sS -H "Authorization: token ${{ inputs.github_token }}" -H "Accept: application/vnd.github+json" "$API_URL" || echo "{}")
            
-           # Extract repo full name and ref
-           SOURCE_REPO=$(echo "$PR_DATA" | python3 -c 'import json,sys; data=json.load(sys.stdin); print(data["head"]["repo"]["full_name"])')
-           CHECKOUT_REF=$(echo "$PR_DATA" | python3 -c 'import json,sys; data=json.load(sys.stdin); print(data["head"]["ref"])')
-           
-           if [ -z "$SOURCE_REPO" ] || [ -z "$CHECKOUT_REF" ]; then
-             echo "Error: Could not extract PR details."
-             echo "$PR_DATA"
-             exit 1
-           fi
-           
+           # Extract repo full name and ref safely using python
+           # If 'head' is missing (e.g. it's an issue not a PR), these will be empty
+           SOURCE_REPO=$(echo "$PR_DATA" | python3 -c 'import json,sys; data=json.load(sys.stdin); print(data.get("head", {}).get("repo", {}).get("full_name", "") or "")')
+           CHECKOUT_REF=$(echo "$PR_DATA" | python3 -c 'import json,sys; data=json.load(sys.stdin); print(data.get("head", {}).get("ref", "") or "")')
+        fi
+
+        if [ -n "$SOURCE_REPO" ] && [ -n "$CHECKOUT_REF" ]; then
            echo "SOURCE_REPO=$SOURCE_REPO" >> $GITHUB_ENV
            echo "CHECKOUT_REF=$CHECKOUT_REF" >> $GITHUB_ENV
            echo "Detected PR source: $SOURCE_REPO @ $CHECKOUT_REF"
         else
+           echo "Could not determine PR source (or not a PR). Falling back to command branch."
            echo "SOURCE_REPO=${{ github.repository }}" >> $GITHUB_ENV
            echo "CHECKOUT_REF=$SYNC_BRANCH" >> $GITHUB_ENV
            echo "Using branch ref: $SYNC_BRANCH from current repo"
