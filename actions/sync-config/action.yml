@@ -71,7 +71,7 @@ runs:
         echo "Comentario recibido:"
         echo "$BODY"
         
-        if echo "$BODY" | grep -qE '^[:white_check_mark:]|^[:x:]|^Configuración sincronizada|^No se pudo sincronizar'; then
+        if echo "$BODY" | grep -qE '^:white_check_mark:|^:x:|^Configuración sincronizada|^No se pudo sincronizar'; then
           echo "El comentario parece ser una respuesta automática. Se ignora."
           echo "SKIP=true" >> $GITHUB_ENV
           exit 0
@@ -132,11 +132,33 @@ runs:
         echo "  Archivo origen: $SOURCE_FILE_PATH"
         echo "  ConfigMap destino: $TARGET_CONFIGMAP"
 
+        # Determine the ref to checkout
+        # If this is a PR comment event, we can try to use the PR's head ref to support forks
+        PR_NUMBER="${{ github.event.issue.number }}"
+        if [ -n "$PR_NUMBER" ]; then
+           # Check if the requested branch matches the PR's head branch
+           PR_HEAD_REF="${{ github.event.issue.pull_request.head.ref }}" # This might not be available in issue_comment payload directly depending on setup, 
+                                                                         # but usually we rely on the branch name passed in the command.
+           
+           # A safer way: if we are in a PR comment, we can fetch the PR details to get the head ref/sha
+           # But to keep it simple: if the user provided branch matches the PR head ref (which we might not know easily without API),
+           # we can just try to fetch refs/pull/$PR_NUMBER/head.
+           
+           # Let's assume if we are running this, we want to checkout the code that the user is talking about.
+           # If the user says "sync -b feature/foo", and that is the PR branch, we can use refs/pull/N/head.
+           
+           echo "CHECKOUT_REF=refs/pull/$PR_NUMBER/head" >> $GITHUB_ENV
+           echo "Using PR ref: refs/pull/$PR_NUMBER/head"
+        else
+           echo "CHECKOUT_REF=$SYNC_BRANCH" >> $GITHUB_ENV
+           echo "Using branch ref: $SYNC_BRANCH"
+        fi
+
     - name: Checkout Source Repo
       if: ${{ env.SKIP == 'false' }}
       uses: actions/checkout@v4
       with:
-        ref: ${{ env.SYNC_BRANCH }}
+        ref: ${{ env.CHECKOUT_REF }}
         path: source-repo
 
     - name: Normalize GitOps repository reference
@@ -326,7 +348,7 @@ runs:
           const fs = require('fs');
           const commentBody = context.payload.comment?.body || '';
           
-          if (/^[:white_check_mark:]|^[:x:]|^Configuración sincronizada|^No se pudo sincronizar/i.test(commentBody)) {
+          if (/^:white_check_mark:|^:x:|^Configuración sincronizada|^No se pudo sincronizar/i.test(commentBody)) {
             core.info('El comentario parece ser una respuesta automática. No se publicará respuesta para evitar loops.');
             return;
           }
