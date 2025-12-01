@@ -12,7 +12,7 @@ inputs:
   install-command:
     description: "Command to install dependencies"
     required: false
-    default: "npm ci"
+    default: "npm install"
 
 runs:
   using: "composite"
