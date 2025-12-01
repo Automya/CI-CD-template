@@ -1,0 +1,28 @@
+name: "Java Test"
+description: "Runs tests for a Java microservice using Gradle."
+inputs:
+  java-version:
+    description: "Java version to use"
+    required: false
+    default: "17"
+  gradle-args:
+    description: "Arguments to pass to Gradle"
+    required: false
+    default: "test"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up JDK
+      uses: actions/setup-java@v4
+      with:
+        java-version: ${{ inputs.java-version }}
+        distribution: 'temurin'
+
+    - name: Make Gradle wrapper executable
+      run: chmod +x ./gradlew
+      shell: bash
+
+    - name: Run tests with Gradle
+      run: ./gradlew ${{ inputs.gradle-args }}
+      shell: bash

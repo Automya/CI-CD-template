@@ -1,0 +1,32 @@
+name: "NPM Test"
+description: "Runs tests for a React frontend using NPM."
+inputs:
+  node-version:
+    description: "Node.js version to use"
+    required: false
+    default: "18"
+  npm-args:
+    description: "Arguments to pass to npm test"
+    required: false
+    default: "test"
+  install-command:
+    description: "Command to install dependencies"
+    required: false
+    default: "npm ci"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: ${{ inputs.install-command }}
+      shell: bash
+
+    - name: Run tests
+      run: npm run ${{ inputs.npm-args }}
+      shell: bash
