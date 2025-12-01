@@ -13,7 +13,6 @@ inputs:
     description: "Command to install dependencies"
     required: false
     default: "npm install"
-
 runs:
   using: "composite"
   steps:
