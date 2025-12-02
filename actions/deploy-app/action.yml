@@ -266,82 +266,63 @@ runs:
       env:
         TAG: ${{ env.DEPLOY_TAG }}
         TARGET_ENV: ${{ env.TARGET_ENV }}
+        GH_TOKEN: ${{ inputs.github_token }}
       run: |
         set -euo pipefail
         ERRFILE="$GITHUB_WORKSPACE/action_error.txt"
         trap 'rc=$?; echo "ERROR creando PR/push - exit code $rc" >> "$ERRFILE"; exit $rc' ERR
 
         owner_repo="${{ env.GITOPS_REPO }}"
-        TOKEN="${{ inputs.github_token }}"
         BASE="${{ inputs.base_branch }}"
         IMAGE="${{ inputs.image_name }}"
 
         BRANCH="deploy/${TARGET_ENV}/${IMAGE}-${TAG}"
         PR_TITLE="${{ inputs.pr_title }} (${TARGET_ENV})"
-        COMMENT_NUMBER="${{ github.event.issue.number || github.event.pull_request.number || github.event.number || '' }}"
-        PR_BODY=$(cat <<'EOF'
+        
+        PR_BODY=$(cat <<EOF
         Actualización automática solicitada desde comentario:
 
-        ```
+        \`\`\`
         ${{ github.event.comment.body || '' }}
-        ```
+        \`\`\`
 
-        - Contenedor: $IMAGE
-        - Tag nuevo: $TAG
-        - Entorno: $TARGET_ENV
+        - Contenedor: ${IMAGE}
+        - Tag nuevo: ${TAG}
+        - Entorno: ${TARGET_ENV}
         EOF
         )
 
         git fetch origin "$BASE" --depth=50 || true
         git checkout -B "$BRANCH"
-        git push --force-with-lease "https://x-access-token:${TOKEN}@github.com/${owner_repo}.git" "$BRANCH"
+        git push --force-with-lease origin "$BRANCH"
 
-        api_url="https://api.github.com/repos/${owner_repo}/pulls"
-        payload=$(printf '{"title":"%s","head":"%s","base":"%s","body":%s}' \
-          "$PR_TITLE" "$BRANCH" "$BASE" "$(printf '%s' "$PR_BODY" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')")
-
-        pr_response=$(curl -sS -X POST -H "Authorization: token ${TOKEN}" \
-          -H "Accept: application/vnd.github+json" "$api_url" -d "$payload")
-        pr_url=$(printf '%s' "$pr_response" | python3 -c 'import json,sys; j=json.load(sys.stdin); print(j.get("html_url",""))')
-        pr_number=$(printf '%s' "$pr_response" | python3 -c 'import json,sys; j=json.load(sys.stdin); print(j.get("number",""))')
+        echo "Creando PR..."
+        pr_url=$(gh pr create \
+          --repo "$owner_repo" \
+          --base "$BASE" \
+          --head "$BRANCH" \
+          --title "$PR_TITLE" \
+          --body "$PR_BODY" 2>&1 | tee /dev/stderr | grep -oE 'https://github.com/[^[:space:]]+' || true)
 
         if [ -z "$pr_url" ]; then
-          echo "La creación de la PR falló: $pr_response" | tee -a "$ERRFILE"
+          echo "La creación de la PR falló" | tee -a "$ERRFILE"
           exit 1
         fi
 
         echo "GITOPS_PR_URL=$pr_url" >> $GITHUB_ENV
-        echo "GITOPS_PR_NUMBER=$pr_number" >> $GITHUB_ENV
-
-        echo "PR creada: $pr_url (número: $pr_number)"
-        echo "Haciendo merge automático..."
-
-        merge_url="https://api.github.com/repos/${owner_repo}/pulls/${pr_number}/merge"
-        merge_payload='{"commit_title":"'"${PR_TITLE}"'","merge_method":"merge"}'
-        merge_response=$(curl -sS -X PUT -H "Authorization: token ${TOKEN}" \
-          -H "Accept: application/vnd.github+json" "$merge_url" -d "$merge_payload")
+        echo "PR creada: $pr_url"
         
-        merged=$(printf '%s' "$merge_response" | python3 -c 'import json,sys; j=json.load(sys.stdin); print(str(j.get("merged", False)).lower())' 2>/dev/null || echo "false")
-        
-        if [ "$merged" = "true" ]; then
-          echo "PR mergeada exitosamente."
-          
-          echo "Eliminando rama ${BRANCH}..."
-          delete_branch_url="https://api.github.com/repos/${owner_repo}/git/refs/heads/${BRANCH}"
-          delete_response=$(curl -sS -X DELETE -H "Authorization: token ${TOKEN}" \
-            -H "Accept: application/vnd.github+json" "$delete_branch_url" 2>&1)
-          
-          if echo "$delete_response" | grep -q '"message":"Not Found"'; then
-            echo "La rama ya fue eliminada o no existe."
-          elif [ -n "$delete_response" ] && ! echo "$delete_response" | grep -qE '^\{|^\['; then
-            echo "Rama eliminada exitosamente."
-          else
-            echo "Advertencia: No se pudo eliminar la rama (puede que ya esté eliminada): $delete_response"
-          fi
+        echo "Configurando auto-merge..."
+        if gh pr merge "$pr_url" --auto --merge --delete-branch 2>&1; then
+          echo "Auto-merge configurado. La PR se mergeará automáticamente cuando pasen los checks requeridos."
         else
-          error_msg=$(printf '%s' "$merge_response" | python3 -c 'import json,sys; j=json.load(sys.stdin); print(j.get("message","Error desconocido"))' 2>/dev/null || echo "Error al hacer merge")
-          echo "No se pudo hacer merge automático: $error_msg" | tee -a "$ERRFILE"
-          echo "Respuesta completa: $merge_response" | tee -a "$ERRFILE"
+          echo "Advertencia: No se pudo configurar auto-merge (puede que no esté habilitado en el repo o que la PR ya esté lista para merge)." | tee -a "$ERRFILE"
+          echo "Intentando merge directo..."
+          if gh pr merge "$pr_url" --merge --delete-branch 2>&1; then
+            echo "PR mergeada exitosamente."
+          else
+            echo "No se pudo hacer merge. Revisa manualmente: $pr_url" | tee -a "$ERRFILE"
+          fi
         fi
 
     - name: Get GKE credentials (Staging)
