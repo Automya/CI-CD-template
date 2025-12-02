@@ -233,6 +233,15 @@ runs:
             fi
 
             NEW_IMAGE="${base}:${TAG}"
+            
+            # Verificar si la imagen ya es la correcta ANTES de modificar
+            if [ "$current_image" = "$NEW_IMAGE" ]; then
+              echo "La imagen ya está en ${NEW_IMAGE}. Se requiere reinicio."
+              echo "NEEDS_RESTART=true" >> $GITHUB_ENV
+              echo "GITOPS_PR_URL=" >> $GITHUB_ENV
+              exit 0
+            fi
+            
             yq eval -i ".spec.template.spec.containers[$i].image = \"${NEW_IMAGE}\"" "$FILE"
             echo "Actualizado contenedor '${CONTAINER_NAME}': ${current_image} -> ${NEW_IMAGE}"
             found=1
@@ -246,18 +255,14 @@ runs:
           exit 1
         fi
 
-        if git diff --quiet -- "$FILE"; then
-          echo "El manifiesto ya estaba en ${NEW_IMAGE}. Se requiere reinicio."
-          echo "NEEDS_RESTART=true" >> $GITHUB_ENV
-          echo "GITOPS_PR_URL=" >> $GITHUB_ENV
-          exit 0
-        fi
+        # Si llegamos aquí, hubo cambios (ya verificamos antes de modificar)
         echo "NEEDS_RESTART=false" >> $GITHUB_ENV
 
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         git add "$FILE"
         git commit -m "chore: update ${CONTAINER_NAME} image to ${TAG}"
+
 
     - name: Push branch and create PR in GitOps repo
       if: ${{ env.SKIP == 'false' && env.NEEDS_RESTART != 'true' }}
