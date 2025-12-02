@@ -321,14 +321,15 @@ runs:
         if gh pr merge "$pr_url" --auto --merge --delete-branch 2>&1; then
           echo "Auto-merge configurado. La PR se mergeará automáticamente cuando pasen los checks requeridos."
         else
-          echo "Advertencia: No se pudo configurar auto-merge (puede que no esté habilitado en el repo o que la PR ya esté lista para merge)." | tee -a "$ERRFILE"
+          echo "Advertencia: No se pudo configurar auto-merge (puede que no esté habilitado en el repo o que la PR ya esté lista para merge)."
           echo "Intentando merge directo..."
           if gh pr merge "$pr_url" --merge --delete-branch 2>&1; then
             echo "PR mergeada exitosamente."
           else
-            echo "No se pudo hacer merge. Revisa manualmente: $pr_url" | tee -a "$ERRFILE"
+            echo "No se pudo hacer merge automático ni directo. Revisa manualmente: $pr_url" | tee -a "$ERRFILE"
           fi
         fi
+
 
     - name: Get GKE credentials (Staging)
       if: ${{ env.SKIP == 'false' && env.NEEDS_RESTART == 'true' && env.TARGET_ENV == 'staging' }}
