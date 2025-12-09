@@ -77,34 +77,46 @@ runs:
         echo "Comentario recibido:"
         echo "$BODY"
         
-        if echo "$BODY" | grep -qE '^[:white_check_mark:]|^[:x:]|^Imagen actualizada|^No se pudo actualizar'; then
-          echo "El comentario parece ser una respuesta automática de esta acción. Se ignora para evitar loops infinitos."
+        # Corrección warning grep: Escapamos los dos puntos para que no parezca una clase POSIX
+        if echo "$BODY" | grep -qE '^\:white_check_mark\:|^\:x\:|^Imagen actualizada|^No se pudo actualizar'; then
+          echo "El comentario parece ser una respuesta automática de esta acción. Se ignora."
           echo "SKIP=true" >> $GITHUB_ENV
           exit 0
         fi
 
         if [ -z "$BODY" ]; then
-          echo "No hay comentario disponible. Esta acción solo responde a issue_comment."
+          echo "No hay comentario disponible."
           echo "SKIP=true" >> $GITHUB_ENV
           exit 0
         fi
 
         BODY_TRIMMED=$(echo "$BODY" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
         
-        if ! echo "$BODY_TRIMMED" | grep -qiE '^deploy[[:space:]]+-t[[:space:]]+[^[:space:]]+[[:space:]]+-e[[:space:]]+(staging|stage|st|stag|stg|prod|production|prd)'; then
-          echo "El comentario no tiene el formato exacto requerido."
-          echo "Formato esperado: 'deploy -t <tag> -e <staging|prod>' (en ese orden exacto)"
-          echo "SKIP=true" >> $GITHUB_ENV
-          exit 0
+        # 1. Detección de intención: ¿Empieza con deploy?
+        if ! echo "$BODY_TRIMMED" | grep -qi '^deploy'; then
+           echo "El comentario no comienza con 'deploy'. Se ignora."
+           echo "SKIP=true" >> $GITHUB_ENV
+           exit 0
         fi
 
-        TAG=$(echo "$BODY" | grep -oE '\-t[[:space:]]+([^[:space:]]+)' | sed -E 's/\-t[[:space:]]+//' | head -n1 || echo "")
-        ENV_RAW=$(echo "$BODY" | grep -oE '\-e[[:space:]]+([^[:space:]]+)' | sed -E 's/\-e[[:space:]]+//' | head -n1 || echo "")
+        # 2. Validación de formato estricto
+        # Si llegamos aquí, ES un deploy, así que cualquier error debe reportarse.
+        echo "SKIP=false" >> $GITHUB_ENV
+        
+        if ! echo "$BODY_TRIMMED" | grep -qiE '^deploy[[:space:]]+-t[[:space:]]+[^[:space:]]+[[:space:]]+-e[[:space:]]+[^[:space:]]+'; then
+          echo "❌ Formato incorrecto."
+          echo "Error de sintaxis: El comando no cumple el formato requerido." > "$GITHUB_WORKSPACE/action_error.txt"
+          echo "Uso correcto: \`deploy -t <tag> -e <staging|prod>\`" >> "$GITHUB_WORKSPACE/action_error.txt"
+          echo "Recibido: \`$BODY_TRIMMED\`" >> "$GITHUB_WORKSPACE/action_error.txt"
+          exit 1
+        fi
+
+        TAG=$(echo "$BODY_TRIMMED" | grep -oE '\-t[[:space:]]+([^[:space:]]+)' | sed -E 's/\-t[[:space:]]+//' | head -n1 || echo "")
+        ENV_RAW=$(echo "$BODY_TRIMMED" | grep -oE '\-e[[:space:]]+([^[:space:]]+)' | sed -E 's/\-e[[:space:]]+//' | head -n1 || echo "")
 
         if [ -z "$TAG" ] || [ -z "$ENV_RAW" ]; then
-          echo "No se pudo extraer el tag o el entorno del comentario."
-          echo "SKIP=true" >> $GITHUB_ENV
-          exit 0
+          echo "Error interno extrayendo variables." > "$GITHUB_WORKSPACE/action_error.txt"
+          exit 1
         fi
 
         ENV_LOWER=$(echo "$ENV_RAW" | tr '[:upper:]' '[:lower:]')
@@ -116,16 +128,17 @@ runs:
             TARGET_ENV="prod"
             ;;
           *)
-            echo "Error: Valor de entorno no soportado: $ENV_RAW (aceptados: staging/stage/st/stag/stg o prod/production/prd)"
+            echo "❌ Entorno desconocido: $ENV_RAW"
+            echo "Error: El entorno '$ENV_RAW' no es válido." > "$GITHUB_WORKSPACE/action_error.txt"
+            echo "Entornos permitidos: staging, prod (o alias: stg, prd)." >> "$GITHUB_WORKSPACE/action_error.txt"
             exit 1
             ;;
         esac
 
         echo "DEPLOY_TAG=$TAG" >> $GITHUB_ENV
         echo "TARGET_ENV=$TARGET_ENV" >> $GITHUB_ENV
-        echo "SKIP=false" >> $GITHUB_ENV
         
-        echo "Comando detectado:"
+        echo "Comando detectado y validado:"
         echo "  Tag: $TAG"
         echo "  Entorno: $TARGET_ENV"
 
