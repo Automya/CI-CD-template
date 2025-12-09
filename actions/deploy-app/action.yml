@@ -187,6 +187,47 @@ runs:
         echo "MANIFEST_PATH=${manifest}" >> $GITHUB_ENV
         echo "Se usará el manifiesto: ${manifest}"
 
+    - name: Verify image existence in Artifact Registry
+      if: ${{ env.SKIP == 'false' }}
+      shell: bash
+      working-directory: gitops-repo
+      env:
+        TAG: ${{ env.DEPLOY_TAG }}
+        CONTAINER_NAME: ${{ inputs.image_name }}
+        FILE: ${{ env.MANIFEST_PATH }}
+      run: |
+        set -euo pipefail
+        ERRFILE="$GITHUB_WORKSPACE/action_error.txt"
+        
+        if [ ! -f "$FILE" ]; then
+          echo "No se encuentra el archivo de manifiesto: $FILE" > "$ERRFILE"
+          exit 1
+        fi
+
+        # Extraer imagen actual usando yq para obtener el repo base
+        CURRENT_IMAGE=$(yq eval ".spec.template.spec.containers[] | select(.name == \"$CONTAINER_NAME\") | .image" "$FILE" | head -n 1)
+
+        if [ -z "$CURRENT_IMAGE" ] || [ "$CURRENT_IMAGE" = "null" ]; then
+           echo "No se encontró el contenedor '$CONTAINER_NAME' en '$FILE' o no tiene imagen." | tee -a "$ERRFILE"
+           exit 1
+        fi
+
+        # Obtener repo base (quitar tag :tag o digest @sha256:...)
+        BASE_IMAGE=$(echo "$CURRENT_IMAGE" | sed -E 's/[:@].*$//')
+        TARGET_IMAGE="${BASE_IMAGE}:${TAG}"
+        
+        echo "Imagen base detectada: $BASE_IMAGE"
+        echo "Verificando existencia de: $TARGET_IMAGE"
+        
+        if ! gcloud container images describe "$TARGET_IMAGE" --format='value(image_summary.digest)' &>/dev/null; then
+          echo "❌ Error: La imagen no existe en el registro."
+          echo "Error: La imagen '$TARGET_IMAGE' no se encontró en Artifact Registry/GCR." > "$ERRFILE"
+          echo "Verifica que el pipeline de Build haya finalizado correctamente y el tag '$TAG' sea válido." >> "$ERRFILE"
+          exit 1
+        fi
+        
+        echo "✅ Imagen verificada exitosamente."
+
     - name: Update manifest with new tag
       if: ${{ env.SKIP == 'false' }}
       shell: bash
