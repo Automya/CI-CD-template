@@ -12,9 +12,24 @@ runs:
     - name: Generate Gradle Lockfiles
       shell: bash
       run: |
-           chmod +x ./gradlew
-           echo "Gradle project detected. Generating lockfiles for accurate scanning..."
-           ./gradlew dependencies --write-locks || echo "Warning: Could not generate lockfiles, scanning might be incomplete"
+           if [ -f "./gradlew" ]; then
+             chmod +x ./gradlew
+             echo "Gradle project detected. Generating lockfiles for accurate scanning..."
+             
+             # Generar para el root
+             ./gradlew dependencies --write-locks || true
+
+             # Iterar por subdirectorios para encontrar módulos y generar sus locks
+             find . -mindepth 2 -maxdepth 2 -name "build.gradle" | while read buildfile; do
+                dir=$(dirname "$buildfile")
+                module=$(basename "$dir")
+                # Ignorar carpetas no-modulos comunes
+                if [[ "$module" == "buildSrc" || "$module" == "gradle" ]]; then continue; fi
+
+                echo "Attempting to generate lock for module: $module"
+                ./gradlew ":$module:dependencies" --write-locks || echo "Warning: Failed to generate lock for $module"
+             done
+           fi
 
 
     - name: Check Trivy Ignore Expiration
