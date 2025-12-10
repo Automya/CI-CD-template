@@ -9,6 +9,14 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - name: Generate Gradle Lockfiles
+      shell: bash
+      run: |
+           chmod +x ./gradlew
+           echo "Gradle project detected. Generating lockfiles for accurate scanning..."
+           ./gradlew dependencies --write-locks || echo "Warning: Could not generate lockfiles, scanning might be incomplete"
+
+
     - name: Check Trivy Ignore Expiration
       shell: bash
       run: |
