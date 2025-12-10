@@ -9,7 +9,68 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Run Trivy vulnerability scanner
+    - name: Check Trivy Ignore Expiration
+      shell: bash
+      run: |
+        IGNORE_FILE="${{ inputs.trivyignore-file }}"
+        
+        if [ ! -f "$IGNORE_FILE" ]; then
+          echo "No ignore file found at $IGNORE_FILE"
+          exit 0
+        fi
+
+        CURRENT_DATE=$(date +%Y-%m-%d)
+        TEMP_FILE=$(mktemp)
+        SKIP_NEXT=0
+
+        echo "Checking expiration dates in $IGNORE_FILE..."
+
+        while IFS= read -r line || [ -n "$line" ]; do
+          # Si debemos saltar esta línea (porque es el CVE de un comentario expirado)
+          if [ "$SKIP_NEXT" -eq 1 ]; then
+            echo "   -> Removing expired CVE: $line"
+            SKIP_NEXT=0
+            continue
+          fi
+
+          # Buscar patrón "# exp: YYYY-MM-DD"
+          if [[ "$line" =~ \#\ *exp:\ *([0-9]{4}-[0-9]{2}-[0-9]{2}) ]]; then
+            EXP_DATE=${BASH_REMATCH[1]}
+            if [[ "$CURRENT_DATE" > "$EXP_DATE" ]]; then
+              echo "⚠️ Expiration date ($EXP_DATE) passed. Removing next CVE."
+              SKIP_NEXT=1
+              continue # No escribimos la línea de comentario expirada
+            fi
+          fi
+          
+          echo "$line" >> "$TEMP_FILE"
+        done < "$IGNORE_FILE"
+
+        mv "$TEMP_FILE" "$IGNORE_FILE"
+        echo "Processed ignore file:"
+        cat "$IGNORE_FILE"
+
+    - name: Generate Trivy Report
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'template'
+        template: '@/contrib/html.tpl'
+        output: 'trivy-report.html'
+        ignore-unfixed: true
+        severity: 'CRITICAL,HIGH'
+        trivyignores: ${{ inputs.trivyignore-file }}
+        exit-code: '0'
+
+    - name: Upload Trivy Report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: trivy-report
+        path: trivy-report.html
+
+    - name: Check Vulnerabilities (Console)
       uses: aquasecurity/trivy-action@master
       with:
         scan-type: 'fs'
