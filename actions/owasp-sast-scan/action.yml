@@ -4,7 +4,7 @@ inputs:
   suppression-file:
     description: 'Path to the suppression XML file (relative to repo root)'
     required: false
-    default: ''
+    default: 'owasp-suppressions.xml'
 
 runs:
   using: "composite"
