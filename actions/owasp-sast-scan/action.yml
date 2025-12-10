@@ -50,13 +50,18 @@ runs:
         echo "Processed ignore file:"
         cat "$IGNORE_FILE"
 
+    - name: Download Trivy HTML Template
+      shell: bash
+      run: |
+        curl -sL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/html.tpl -o html.tpl
+
     - name: Generate Trivy Report
       uses: aquasecurity/trivy-action@master
       with:
         scan-type: 'fs'
         scan-ref: '.'
         format: 'template'
-        template: '@/contrib/html.tpl'
+        template: '@html.tpl'
         output: 'trivy-report.html'
         ignore-unfixed: true
         severity: 'CRITICAL,HIGH'
