@@ -9,27 +9,37 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Generate Gradle Lockfiles
+    - name: Generate POMs for Scanning
       shell: bash
       run: |
-           if [ -f "./gradlew" ]; then
-             chmod +x ./gradlew
-             echo "Gradle project detected. Generating lockfiles for accurate scanning..."
+        if [ -f "./gradlew" ]; then
+             echo "Gradle project detected. Generating POMs for accurate scanning..."
              
-             # Generar para el root
-             ./gradlew dependencies --write-locks || true
-
-             # Iterar por subdirectorios para encontrar módulos y generar sus locks
-             find . -mindepth 2 -maxdepth 2 -name "build.gradle" | while read buildfile; do
-                dir=$(dirname "$buildfile")
-                module=$(basename "$dir")
-                # Ignorar carpetas no-modulos comunes
-                if [[ "$module" == "buildSrc" || "$module" == "gradle" ]]; then continue; fi
-
-                echo "Attempting to generate lock for module: $module"
-                ./gradlew ":$module:dependencies" --write-locks || echo "Warning: Failed to generate lock for $module"
-             done
-           fi
+             # Crear script de inicialización para inyectar plugin maven-publish
+             cat <<EOF > init-trivy.gradle
+             allprojects {
+                 // Solo aplicar si es un proyecto java
+                 plugins.withId('java') {
+                     apply plugin: 'maven-publish'
+                     publishing {
+                         publications {
+                             maven(MavenPublication) {
+                                 from components.java
+                             }
+                         }
+                     }
+                 }
+             }
+             EOF
+             
+             chmod +x ./gradlew
+             # Generar los POMs. Usamos || true para no fallar el build si algún módulo da error.
+             ./gradlew generatePomFileForMavenPublication --init-script init-trivy.gradle || echo "Warning: POM generation had issues"
+             
+             echo "Generated POM files:"
+             find build -name "pom-default.xml" 2>/dev/null || echo "No POMs found in root build"
+             find */build -name "pom-default.xml" 2>/dev/null || echo "No POMs found in submodules"
+        fi
 
 
     - name: Check Trivy Ignore Expiration
