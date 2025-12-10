@@ -16,29 +16,15 @@ runs:
              echo "Gradle project detected. Generating POMs for accurate scanning..."
              
              # Crear script de inicialización para inyectar plugin maven-publish
-             cat <<EOF > init-trivy.gradle
-             allprojects {
-                 // Solo aplicar si es un proyecto java
-                 plugins.withId('java') {
-                     apply plugin: 'maven-publish'
-                     publishing {
-                         publications {
-                             maven(MavenPublication) {
-                                 from components.java
-                             }
-                         }
-                     }
-                 }
-             }
-             EOF
+             # Usamos printf para evitar problemas de indentación con EOF en YAML
+             printf "allprojects {\n    plugins.withId('java') {\n        apply plugin: 'maven-publish'\n        publishing {\n            publications {\n                maven(MavenPublication) {\n                    from components.java\n                }\n            }\n        }\n    }\n}\n" > init-trivy.gradle
              
              chmod +x ./gradlew
              # Generar los POMs. Usamos || true para no fallar el build si algún módulo da error.
              ./gradlew generatePomFileForMavenPublication --init-script init-trivy.gradle || echo "Warning: POM generation had issues"
              
              echo "Generated POM files:"
-             find build -name "pom-default.xml" 2>/dev/null || echo "No POMs found in root build"
-             find */build -name "pom-default.xml" 2>/dev/null || echo "No POMs found in submodules"
+             find . -name "pom-default.xml" || echo "No POMs found"
         fi
 
 
