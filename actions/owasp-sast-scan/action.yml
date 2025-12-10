@@ -1,39 +1,21 @@
-name: 'OWASP SAST Scan'
-description: 'Run OWASP Dependency Check'
+name: 'Trivy SAST Scan'
+description: 'Run Trivy Vulnerability Scanner'
 inputs:
-  suppression-file:
-    description: 'Path to the suppression XML file (relative to repo root)'
+  trivyignore-file:
+    description: 'Path to the .trivyignore file (relative to repo root)'
     required: false
-    default: 'owasp-suppressions.xml'
+    default: '.trivyignore'
 
 runs:
   using: "composite"
   steps:
-      - name: Grant execute permission to Gradle wrapper
-        shell: bash
-        run: chmod +x ./gradlew
-
-      - name: Build project (skip tests)
-        shell: bash
-        run: ./gradlew clean build -x test
-      - name: Depcheck
-        uses: dependency-check/Dependency-Check_Action@main
-        id: Depcheck
-        env:
-          JAVA_HOME: /opt/jdk
-        with:
-          project: 'test'
-          path: '.'
-          format: 'HTML'
-          out: 'reports'
-          args: >
-            --failOnCVSS 7
-            --enableRetired
-            ${{ inputs.suppression-file != '' && format('--suppression {0}/{1}', github.workspace, inputs.suppression-file) || '' }}
-
-      - name: Upload Test results
-        if: always()
-        uses: actions/upload-artifact@master
-        with:
-           name: Depcheck report
-           path: ${{github.workspace}}/reports
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'table'
+        exit-code: '1'
+        ignore-unfixed: true
+        severity: 'CRITICAL,HIGH'
+        trivyignores: ${{ inputs.trivyignore-file }}
