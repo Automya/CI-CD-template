@@ -29,7 +29,7 @@ runs:
           args: >
             --failOnCVSS 7
             --enableRetired
-            ${{ inputs.suppression-file != '' && format('--suppression {0}', inputs.suppression-file) || '' }}
+            ${{ inputs.suppression-file != '' && format('--suppression {0}/{1}', github.workspace, inputs.suppression-file) || '' }}
 
       - name: Upload Test results
         if: always()
