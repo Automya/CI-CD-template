@@ -1,5 +1,5 @@
 name: 'Trivy SAST Scan'
-description: 'Run Trivy Vulnerability Scanner'
+description: 'Run Trivy Vulnerability Scanner using SBOM'
 inputs:
   trivyignore-file:
     description: 'Path to the .trivyignore file (relative to repo root)'
@@ -9,24 +9,30 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Generate POMs for Scanning
+    - name: Setup Node.js for cdxgen
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+
+    - name: Install cdxgen
+      shell: bash
+      run: npm install -g @cyclonedx/cdxgen
+
+    - name: Generate SBOM (CycloneDX)
       shell: bash
       run: |
-        if [ -f "./gradlew" ]; then
-             echo "Gradle project detected. Generating POMs for accurate scanning..."
-             
-             # Crear script de inicialización para inyectar plugin maven-publish
-             # Usamos printf para evitar problemas de indentación con EOF en YAML
-             printf "allprojects {\n    plugins.withId('java') {\n        apply plugin: 'maven-publish'\n        publishing {\n            publications {\n                maven(MavenPublication) {\n                    from components.java\n                }\n            }\n        }\n    }\n}\n" > init-trivy.gradle
-             
-             chmod +x ./gradlew
-             # Generar los POMs. Usamos || true para no fallar el build si algún módulo da error.
-             ./gradlew generatePomFileForMavenPublication --init-script init-trivy.gradle || echo "Warning: POM generation had issues"
-             
-             echo "Generated POM files:"
-             find . -name "pom-default.xml" || echo "No POMs found"
+        echo "Generating SBOM for Gradle project..."
+        # cdxgen detecta automáticamente gradle si ve archivos build.gradle
+        # --resolve-class es util para java
+        cdxgen -t gradle -o bom.json --recurse
+        
+        if [ -f "bom.json" ]; then
+          echo "SBOM generated successfully. Size:"
+          ls -lh bom.json
+        else
+          echo "Failed to generate SBOM. Checking debug logs..."
+          exit 1
         fi
-
 
     - name: Check Trivy Ignore Expiration
       shell: bash
@@ -45,20 +51,18 @@ runs:
         echo "Checking expiration dates in $IGNORE_FILE..."
 
         while IFS= read -r line || [ -n "$line" ]; do
-          # Si debemos saltar esta línea (porque es el CVE de un comentario expirado)
           if [ "$SKIP_NEXT" -eq 1 ]; then
             echo "   -> Removing expired CVE: $line"
             SKIP_NEXT=0
             continue
           fi
 
-          # Buscar patrón "# exp: YYYY-MM-DD"
           if [[ "$line" =~ \#\ *exp:\ *([0-9]{4}-[0-9]{2}-[0-9]{2}) ]]; then
             EXP_DATE=${BASH_REMATCH[1]}
             if [[ "$CURRENT_DATE" > "$EXP_DATE" ]]; then
               echo "⚠️ Expiration date ($EXP_DATE) passed. Removing next CVE."
               SKIP_NEXT=1
-              continue # No escribimos la línea de comentario expirada
+              continue
             fi
           fi
           
@@ -74,11 +78,11 @@ runs:
       run: |
         curl -sL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/html.tpl -o html.tpl
 
-    - name: Generate Trivy Report
+    - name: Generate Trivy Report (SBOM)
       uses: aquasecurity/trivy-action@master
       with:
-        scan-type: 'fs'
-        scan-ref: '.'
+        scan-type: 'sbom'
+        scan-ref: 'bom.json'
         format: 'template'
         template: '@html.tpl'
         output: 'trivy-report.html'
@@ -94,11 +98,11 @@ runs:
         name: trivy-report
         path: trivy-report.html
 
-    - name: Check Vulnerabilities (Console)
+    - name: Check Vulnerabilities (Console SBOM)
       uses: aquasecurity/trivy-action@master
       with:
-        scan-type: 'fs'
-        scan-ref: '.'
+        scan-type: 'sbom'
+        scan-ref: 'bom.json'
         format: 'table'
         exit-code: '1'
         ignore-unfixed: true
