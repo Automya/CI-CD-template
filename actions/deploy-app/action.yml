@@ -149,7 +149,7 @@ runs:
       if: ${{ env.SKIP == 'false' }}
       uses: actions/github-script@v7
       env:
-        IMAGE_NAME: ${{ env.IMAGE_NAME }}
+        IMAGE_NAME: ${{ inputs.image_name }}
         TAG: ${{ env.DEPLOY_TAG }}
         TARGET_ENV: ${{ env.TARGET_ENV }}
         WEBHOOK_URL: ${{ inputs.google_chat_webhook }}
