@@ -149,6 +149,7 @@ runs:
       if: ${{ env.SKIP == 'false' }}
       uses: actions/github-script@v7
       env:
+        IMAGE_NAME: ${{ env.IMAGE_NAME }}
         TAG: ${{ env.DEPLOY_TAG }}
         TARGET_ENV: ${{ env.TARGET_ENV }}
         WEBHOOK_URL: ${{ inputs.google_chat_webhook }}
@@ -156,10 +157,12 @@ runs:
         github-token: ${{ env.COMMENT_TOKEN }}
         script: |
           const tag = process.env.TAG;
+          const imageName = process.env.IMAGE_NAME;
           const targetEnv = process.env.TARGET_ENV;
           const webhookUrl = process.env.WEBHOOK_URL;
           
           const body = `🚀 **Iniciando Despliegue**\n` +
+                       `- **Imagen:** \`${imageName}\`\n` +
                        `- **Tag:** \`${tag}\`\n` +
                        `- **Entorno:** \`${targetEnv}\`\n` +
                        `⏳ Procesando...`;
