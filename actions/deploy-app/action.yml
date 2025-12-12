@@ -145,6 +145,66 @@ runs:
         echo "  Tag: $TAG"
         echo "  Entorno: $TARGET_ENV"
 
+    - name: Notify Start Deployment
+      if: ${{ env.SKIP == 'false' }}
+      uses: actions/github-script@v7
+      env:
+        TAG: ${{ env.DEPLOY_TAG }}
+        TARGET_ENV: ${{ env.TARGET_ENV }}
+        WEBHOOK_URL: ${{ inputs.google_chat_webhook }}
+      with:
+        github-token: ${{ env.COMMENT_TOKEN }}
+        script: |
+          const tag = process.env.TAG;
+          const targetEnv = process.env.TARGET_ENV;
+          const webhookUrl = process.env.WEBHOOK_URL;
+          
+          const body = `🚀 **Iniciando Despliegue**\n` +
+                       `- **Tag:** \`${tag}\`\n` +
+                       `- **Entorno:** \`${targetEnv}\`\n` +
+                       `⏳ Procesando...`;
+
+          // 1. Comment on GitHub PR
+          const issueNumber = context.issue?.number ||
+            context.payload?.issue?.number ||
+            context.payload?.pull_request?.number;
+            
+          if (issueNumber) {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body
+            });
+          } else {
+             console.log("No issue number found, skipping PR comment.");
+          }
+
+          // 2. Notify Google Chat (if webhook provided)
+          if (webhookUrl) {
+             const payload = JSON.stringify({ text: body });
+             // We use exec to run curl since we are in a JS context but have access to shell commands via exec
+             // But actions/github-script doesn't export exec by default easily for complex curls without @actions/exec
+             // So we will use fetch if available (Node 18+) or https module.
+             // Since this runs in modern runner, fetch is likely available.
+             
+             try {
+                const response = await fetch(webhookUrl, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: payload
+                });
+                if (!response.ok) {
+                   console.error(`Failed to send to Google Chat: ${response.status} ${response.statusText}`);
+                } else {
+                   console.log("Notification sent to Google Chat.");
+                }
+             } catch (error) {
+                // Fallback for older Node environments or network issues
+                console.error("Error sending to Google Chat:", error);
+             }
+          }
+
     - name: Normalize GitOps repository reference
       if: ${{ env.SKIP == 'false' }}
       shell: bash
