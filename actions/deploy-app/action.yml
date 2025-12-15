@@ -160,11 +160,15 @@ runs:
           const imageName = process.env.IMAGE_NAME;
           const targetEnv = process.env.TARGET_ENV;
           const webhookUrl = process.env.WEBHOOK_URL;
+          const runId = context.runId;
+          const repo = context.repo;
+          const actionUrl = `${process.env.GITHUB_SERVER_URL}/${repo.owner}/${repo.repo}/actions/runs/${runId}`;
           
           const body = `🚀 **Iniciando Despliegue**\n` +
                        `- **Imagen:** \`${imageName}\`\n` +
                        `- **Tag:** \`${tag}\`\n` +
                        `- **Entorno:** \`${targetEnv}\`\n` +
+                       `- [Ver Logs del Action](${actionUrl})\n` +
                        `⏳ Procesando...`;
 
           // 1. Comment on GitHub PR
