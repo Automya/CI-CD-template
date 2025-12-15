@@ -170,8 +170,6 @@ runs:
 
     - name: Checkout code
       uses: actions/checkout@v4
-      if: steps.context.outputs.branch != ''
-      uses: actions/checkout@v4
       with:
         ref: ${{ steps.context.outputs.branch }}
     - name: Authenticate to GCP using Workload Identity Federation
