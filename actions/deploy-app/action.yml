@@ -5,56 +5,56 @@ description: >
   al repositorio GitOps mediante una PR automática.
 inputs:
   gitops_repo:
-    description: 'Repo GitOps destino en formato owner/repo o URL (ej: Automya/gitops).'
+    description: "Repo GitOps destino en formato owner/repo o URL (ej: Automya/gitops)."
     required: true
   staging_manifest_path:
-    description: 'Ruta del manifiesto Kubernetes para staging dentro del repo GitOps.'
+    description: "Ruta del manifiesto Kubernetes para staging dentro del repo GitOps."
     required: true
   prod_manifest_path:
-    description: 'Ruta del manifiesto Kubernetes para producción dentro del repo GitOps.'
+    description: "Ruta del manifiesto Kubernetes para producción dentro del repo GitOps."
     required: true
   image_name:
-    description: 'Nombre del contenedor (.spec.template.spec.containers[].name) a modificar.'
+    description: "Nombre del contenedor (.spec.template.spec.containers[].name) a modificar."
     required: true
   github_token:
-    description: 'Token con permisos write en el repo GitOps (PAT o GITHUB_TOKEN elevado).'
+    description: "Token con permisos write en el repo GitOps (PAT o GITHUB_TOKEN elevado)."
     required: true
   source_repo_token:
-    description: 'Token para comentar en la PR origen (opcional, default usa github_token).'
+    description: "Token para comentar en la PR origen (opcional, default usa github_token)."
     required: false
-    default: ''
+    default: ""
   base_branch:
-    description: 'Rama base en el repo GitOps (main por defecto).'
+    description: "Rama base en el repo GitOps (main por defecto)."
     required: false
-    default: 'main'
+    default: "main"
   pr_title:
-    description: 'Título base de la PR que se creará en el repo GitOps.'
+    description: "Título base de la PR que se creará en el repo GitOps."
     required: false
-    default: 'chore: update image tag'
+    default: "chore: update image tag"
   staging_cluster_name:
-    description: 'Staging GKE Cluster Name'
+    description: "Staging GKE Cluster Name"
     required: true
   prod_cluster_name:
-    description: 'Prod GKE Cluster Name'
+    description: "Prod GKE Cluster Name"
     required: true
   staging_cluster_location:
-    description: 'Staging GKE Cluster Location'
+    description: "Staging GKE Cluster Location"
     required: true
   prod_cluster_location:
-    description: 'Prod GKE Cluster Location'
+    description: "Prod GKE Cluster Location"
     required: true
   project_id:
-    description: 'GCP Project ID (shared for both clusters)'
+    description: "GCP Project ID (shared for both clusters)"
     required: true
   deployment_name:
-    description: 'K8s Deployment name to restart (defaults to image_name if not set)'
+    description: "K8s Deployment name to restart (defaults to image_name if not set)"
     required: false
   namespace:
-    description: 'K8s Namespace (default: default)'
+    description: "K8s Namespace (default: default)"
     required: false
-    default: 'default'
+    default: "default"
   google_chat_webhook:
-    description: 'Webhook URL para notificaciones a Google Chat (opcional).'
+    description: "Webhook URL para notificaciones a Google Chat (opcional)."
     required: false
 runs:
   using: composite
@@ -76,10 +76,10 @@ runs:
       run: |
         set -euo pipefail
         BODY="${{ github.event.comment.body || '' }}"
-        
+
         echo "Comentario recibido:"
         echo "$BODY"
-        
+
         # Corrección warning grep: Escapamos los dos puntos para que no parezca una clase POSIX
         if echo "$BODY" | grep -qE '^\:white_check_mark\:|^\:x\:|^Imagen actualizada|^No se pudo actualizar'; then
           echo "El comentario parece ser una respuesta automática de esta acción. Se ignora."
@@ -94,7 +94,7 @@ runs:
         fi
 
         BODY_TRIMMED=$(echo "$BODY" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-        
+
         # 1. Detección de intención: ¿Empieza con deploy?
         if ! echo "$BODY_TRIMMED" | grep -qi '^deploy'; then
            echo "El comentario no comienza con 'deploy'. Se ignora."
@@ -105,7 +105,7 @@ runs:
         # 2. Validación de formato estricto
         # Si llegamos aquí, ES un deploy, así que cualquier error debe reportarse.
         echo "SKIP=false" >> $GITHUB_ENV
-        
+
         if ! echo "$BODY_TRIMMED" | grep -qiE '^deploy[[:space:]]+-t[[:space:]]+[^[:space:]]+[[:space:]]+-e[[:space:]]+[^[:space:]]+'; then
           echo "❌ Formato incorrecto."
           echo "Error de sintaxis: El comando no cumple el formato requerido." > "$GITHUB_WORKSPACE/action_error.txt"
@@ -128,19 +128,21 @@ runs:
             TARGET_ENV="staging"
             ;;
           prod|production|prd)
-            TARGET_ENV="prod"
+            echo "❌ Despliegue a producción bloqueado."
+            echo "Error: Despliegue a producción via comando no permitido. Solo se permite via Release." > "$GITHUB_WORKSPACE/action_error.txt"
+            exit 1
             ;;
           *)
             echo "❌ Entorno desconocido: $ENV_RAW"
             echo "Error: El entorno '$ENV_RAW' no es válido." > "$GITHUB_WORKSPACE/action_error.txt"
-            echo "Entornos permitidos: staging, prod (o alias: stg, prd)." >> "$GITHUB_WORKSPACE/action_error.txt"
+            echo "Entornos permitidos: staging (o alias: stg)." >> "$GITHUB_WORKSPACE/action_error.txt"
             exit 1
             ;;
         esac
 
         echo "DEPLOY_TAG=$TAG" >> $GITHUB_ENV
         echo "TARGET_ENV=$TARGET_ENV" >> $GITHUB_ENV
-        
+
         echo "Comando detectado y validado:"
         echo "  Tag: $TAG"
         echo "  Entorno: $TARGET_ENV"
@@ -163,7 +165,7 @@ runs:
           const runId = context.runId;
           const repo = context.repo;
           const actionUrl = `${process.env.GITHUB_SERVER_URL}/${repo.owner}/${repo.repo}/actions/runs/${runId}`;
-          
+
           const body = `🚀 **Iniciando Despliegue**\n` +
                        `- **Imagen:** \`${imageName}\`\n` +
                        `- **Tag:** \`${tag}\`\n` +
@@ -281,7 +283,7 @@ runs:
       run: |
         set -euo pipefail
         ERRFILE="$GITHUB_WORKSPACE/action_error.txt"
-        
+
         if [ ! -f "$FILE" ]; then
           echo "No se encuentra el archivo de manifiesto: $FILE" > "$ERRFILE"
           exit 1
@@ -298,17 +300,17 @@ runs:
         # Obtener repo base (quitar tag :tag o digest @sha256:...)
         BASE_IMAGE=$(echo "$CURRENT_IMAGE" | sed -E 's/[:@].*$//')
         TARGET_IMAGE="${BASE_IMAGE}:${TAG}"
-        
+
         echo "Imagen base detectada: $BASE_IMAGE"
         echo "Verificando existencia de: $TARGET_IMAGE"
-        
+
         if ! gcloud container images describe "$TARGET_IMAGE" --format='value(image_summary.digest)' &>/dev/null; then
           echo "❌ Error: La imagen no existe en el registro."
           echo "Error: La imagen '$TARGET_IMAGE' no se encontró en Artifact Registry/GCR." > "$ERRFILE"
           echo "Verifica que el pipeline de Build haya finalizado correctamente y el tag '$TAG' sea válido." >> "$ERRFILE"
           exit 1
         fi
-        
+
         echo "✅ Imagen verificada exitosamente."
 
     - name: Update manifest with new tag
@@ -387,7 +389,6 @@ runs:
         git add "$FILE"
         git commit -m "chore: update ${CONTAINER_NAME} image to ${TAG}"
 
-
     - name: Push branch and create PR in GitOps repo
       if: ${{ env.SKIP == 'false' && env.NEEDS_RESTART != 'true' }}
       shell: bash
@@ -407,7 +408,7 @@ runs:
 
         BRANCH="deploy/${TARGET_ENV}/${IMAGE}-${TAG}"
         PR_TITLE="${{ inputs.pr_title }} (${TARGET_ENV})"
-        
+
         PR_BODY=$(cat <<EOF
         Actualización automática solicitada desde comentario:
 
@@ -440,7 +441,7 @@ runs:
 
         echo "GITOPS_PR_URL=$pr_url" >> $GITHUB_ENV
         echo "PR creada: $pr_url"
-        
+
         echo "Configurando auto-merge..."
         if gh pr merge "$pr_url" --auto --merge --delete-branch 2>&1; then
           echo "Auto-merge configurado. La PR se mergeará automáticamente cuando pasen los checks requeridos."
@@ -453,7 +454,6 @@ runs:
             echo "No se pudo hacer merge automático ni directo. Revisa manualmente: $pr_url" | tee -a "$ERRFILE"
           fi
         fi
-
 
     - name: Get GKE credentials (Staging)
       if: ${{ env.SKIP == 'false' && env.NEEDS_RESTART == 'true' && env.TARGET_ENV == 'staging' }}
@@ -502,12 +502,12 @@ runs:
         script: |
           const fs = require('fs');
           const commentBody = context.payload.comment?.body || '';
-          
+
           if (/^✅|^❌|^Imagen actualizada|^No se pudo actualizar/i.test(commentBody)) {
             core.info('El comentario parece ser una respuesta automática. No se publicará respuesta para evitar loops.');
             return;
           }
-          
+
           const errFile = process.env.ERRFILE;
           const hasError = fs.existsSync(errFile) && fs.readFileSync(errFile, 'utf8').trim().length > 0;
           const prUrl = process.env.GITOPS_PR_URL || '';
@@ -563,16 +563,15 @@ runs:
         MESSAGE_BODY: ${{ steps.report-pr.outputs.deploy_message }}
       run: |
         set -euo pipefail
-        
+
         if [ -z "$MESSAGE_BODY" ]; then
           echo "No message body available to send."
           exit 0
         fi
-        
+
         # Use jq to construct JSON safely
         jq -n --arg text "$MESSAGE_BODY" '{text: $text}' > payload.json
-        
+
         curl -s -H "Content-Type: application/json" \
           -d @payload.json \
           "$WEBHOOK_URL"
-
