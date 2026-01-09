@@ -130,8 +130,8 @@ runs:
           prod|production|prd)
             echo "❌ Despliegue a producción bloqueado."
             echo "Error: Despliegue a producción via comando no permitido. Solo se permite via Release." > "$GITHUB_WORKSPACE/action_error.txt"
-            echo "SKIP=true" >> $GITHUB_ENV
-            exit 1
+            echo "STOP_EXECUTION=true" >> $GITHUB_ENV
+            # No hacemos exit 1 para permitir que los pasos de reporte final se ejecuten y comenten el error.
             ;;
           *)
             echo "❌ Entorno desconocido: $ENV_RAW"
@@ -216,7 +216,7 @@ runs:
           }
 
     - name: Normalize GitOps repository reference
-      if: ${{ env.SKIP == 'false' }}
+      if: ${{ env.SKIP == 'false' && env.STOP_EXECUTION != 'true' }}
       shell: bash
       run: |
         set -euo pipefail
@@ -242,7 +242,7 @@ runs:
         echo "Repositorio GitOps normalizado: $repo"
 
     - name: Checkout GitOps repository
-      if: ${{ env.SKIP == 'false' }}
+      if: ${{ env.SKIP == 'false' && env.STOP_EXECUTION != 'true' }}
       uses: actions/checkout@v4
       with:
         repository: ${{ env.GITOPS_REPO }}
@@ -250,7 +250,7 @@ runs:
         path: gitops-repo
 
     - name: Ensure yq is available
-      if: ${{ env.SKIP == 'false' }}
+      if: ${{ env.SKIP == 'false' && env.STOP_EXECUTION != 'true' }}
       shell: bash
       run: |
         set -euo pipefail
@@ -261,7 +261,7 @@ runs:
         yq --version
 
     - name: Select manifest path
-      if: ${{ env.SKIP == 'false' }}
+      if: ${{ env.SKIP == 'false' && env.STOP_EXECUTION != 'true' }}
       shell: bash
       run: |
         set -euo pipefail
@@ -274,7 +274,7 @@ runs:
         echo "Se usará el manifiesto: ${manifest}"
 
     - name: Verify image existence in Artifact Registry
-      if: ${{ env.SKIP == 'false' }}
+      if: ${{ env.SKIP == 'false' && env.STOP_EXECUTION != 'true' }}
       shell: bash
       working-directory: gitops-repo
       env:
@@ -315,7 +315,7 @@ runs:
         echo "✅ Imagen verificada exitosamente."
 
     - name: Update manifest with new tag
-      if: ${{ env.SKIP == 'false' }}
+      if: ${{ env.SKIP == 'false' && env.STOP_EXECUTION != 'true' }}
       shell: bash
       working-directory: gitops-repo
       env:
@@ -391,7 +391,7 @@ runs:
         git commit -m "chore: update ${CONTAINER_NAME} image to ${TAG}"
 
     - name: Push branch and create PR in GitOps repo
-      if: ${{ env.SKIP == 'false' && env.NEEDS_RESTART != 'true' }}
+      if: ${{ env.SKIP == 'false' && env.NEEDS_RESTART != 'true' && env.STOP_EXECUTION != 'true' }}
       shell: bash
       working-directory: gitops-repo
       env:
@@ -457,7 +457,7 @@ runs:
         fi
 
     - name: Get GKE credentials (Staging)
-      if: ${{ env.SKIP == 'false' && env.NEEDS_RESTART == 'true' && env.TARGET_ENV == 'staging' }}
+      if: ${{ env.SKIP == 'false' && env.NEEDS_RESTART == 'true' && env.TARGET_ENV == 'staging' && env.STOP_EXECUTION != 'true' }}
       uses: google-github-actions/get-gke-credentials@v1
       with:
         cluster_name: ${{ inputs.staging_cluster_name }}
@@ -465,7 +465,7 @@ runs:
         project_id: ${{ inputs.project_id }}
 
     - name: Get GKE credentials (Prod)
-      if: ${{ env.SKIP == 'false' && env.NEEDS_RESTART == 'true' && env.TARGET_ENV == 'prod' }}
+      if: ${{ env.SKIP == 'false' && env.NEEDS_RESTART == 'true' && env.TARGET_ENV == 'prod' && env.STOP_EXECUTION != 'true' }}
       uses: google-github-actions/get-gke-credentials@v1
       with:
         cluster_name: ${{ inputs.prod_cluster_name }}
@@ -473,7 +473,7 @@ runs:
         project_id: ${{ inputs.project_id }}
 
     - name: Restart Deployment
-      if: ${{ env.SKIP == 'false' && env.NEEDS_RESTART == 'true' }}
+      if: ${{ env.SKIP == 'false' && env.NEEDS_RESTART == 'true' && env.STOP_EXECUTION != 'true' }}
       shell: bash
       env:
         DEPLOYMENT_NAME: ${{ inputs.deployment_name || inputs.image_name }}
