@@ -130,6 +130,7 @@ runs:
           prod|production|prd)
             echo "❌ Despliegue a producción bloqueado."
             echo "Error: Despliegue a producción via comando no permitido. Solo se permite via Release." > "$GITHUB_WORKSPACE/action_error.txt"
+            echo "SKIP=true" >> $GITHUB_ENV
             exit 1
             ;;
           *)
