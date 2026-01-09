@@ -13,6 +13,9 @@ inputs:
   container_name:
     description: "Nombre del contenedor a actualizar en el manifiesto (opcional, usa IMAGE_NAME si no se define)."
     required: false
+  google_chat_webhook:
+    description: "Webhook URL para notificaciones a Google Chat (opcional)."
+    required: false
 
 runs:
   using: "composite"
@@ -20,16 +23,43 @@ runs:
     - name: begin notification
       if: github.event_name == 'issue_comment'
       shell: bash
+      env:
+        WEBHOOK_URL: ${{ inputs.google_chat_webhook }}
+        PR_NUMBER: ${{ github.event.issue.number }}
+        REPO: ${{ github.repository }}
+        GH_TOKEN: ${{ env.GH_TOKEN }}
+        RUN_ID: ${{ github.run_id }}
       run: |
-        PR_NUMBER=$(jq -r '.issue.number // empty' < "$GITHUB_EVENT_PATH")
+        # Definir función para comentar en PR
         comment() {
           MSG="$1"
           curl -s -H "Authorization: token $GH_TOKEN" \
             -X POST \
             -d "{\"body\":\"$MSG\"}" \
-            "https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" > /dev/null
+            "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/comments" > /dev/null
         }
-        comment "🚀 Iniciando Build, espere por favor..."
+
+        # Mensaje base
+        MSG_BASE="🚀 Iniciando Build, espere por favor..."
+        comment "$MSG_BASE"
+
+        # Notificar a Google Chat si existe webhook
+        if [ -n "$WEBHOOK_URL" ]; then
+          # Construir mensaje enriquecido para Chat
+          LINK="${GITHUB_SERVER_URL}/${REPO}/actions/runs/${RUN_ID}"
+          CHAT_MSG="🚀 **Iniciando Build**
+          - **Repo:** $REPO
+          - **PR:** #$PR_NUMBER
+          - [Ver Logs]($LINK)
+          ⏳ Iniciando..."
+
+          echo "Enviando notificación a Google Chat..."
+          jq -n --arg text "$CHAT_MSG" '{text: $text}' > start_notification.json
+          
+          curl -s -H "Content-Type: application/json" \
+               -d @start_notification.json \
+               "$WEBHOOK_URL" || echo "Advertencia: Falló la notificación a Google Chat."
+        fi
     - name: Checkout code
       uses: actions/checkout@v4
 
@@ -277,6 +307,7 @@ runs:
         STATUS="${{ steps.build.outputs.status }}"
         TAG="${{ steps.context.outputs.tag }}"
         IMAGE="$GCP_REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$IMAGE_NAME:$TAG"
+        WEBHOOK_URL="${{ inputs.google_chat_webhook }}"
 
         comment() {
           MSG="$1"
@@ -284,6 +315,14 @@ runs:
             -X POST \
             -d "{\"body\":\"$MSG\"}" \
             "https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" > /dev/null
+        }
+
+        notify_chat() {
+           CHAT_BODY="$1"
+           if [ -n "$WEBHOOK_URL" ]; then
+              jq -n --arg text "$CHAT_BODY" '{text: $text}' > chat_notification.json
+              curl -s -H "Content-Type: application/json" -d @chat_notification.json "$WEBHOOK_URL" || true
+           fi
         }
 
         case "$STATUS" in
@@ -303,12 +342,18 @@ runs:
             comment "❌ Error: Tipo de evento no soportado."
             ;;
           "build_failed")
-            comment "❌ Error: Falló la construcción de la imagen ${IMAGE}. [Ver logs del job]($JOB_URL)"
+            MSG="❌ Error: Falló la construcción de la imagen ${IMAGE}. [Ver logs del job]($JOB_URL)"
+            comment "$MSG"
+            notify_chat "❌ **Build Fallido**\n- **Imagen:** \`$IMAGE\`\n- [Ver Logs]($JOB_URL)"
             ;;
           "push_failed")
-            comment "❌ Error: Falló el push de la imagen ${IMAGE}. [Ver logs del job]($JOB_URL)"
+            MSG="❌ Error: Falló el push de la imagen ${IMAGE}. [Ver logs del job]($JOB_URL)"
+            comment "$MSG"
+            notify_chat "❌ **Push Fallido**\n- **Imagen:** \`$IMAGE\`\n- [Ver Logs]($JOB_URL)"
             ;;
           "success")
-            comment "🎉 Éxito: Imagen ${IMAGE} subida correctamente. [Ver ejecución completa]($JOB_URL)"
+            MSG="🎉 Éxito: Imagen ${IMAGE} subida correctamente. [Ver ejecución completa]($JOB_URL)"
+            comment "$MSG"
+            notify_chat "✅ **Build Exitoso**\n- **Imagen:** \`$IMAGE\`\n- [Ver Logs]($JOB_URL)"
             ;;
         esac
