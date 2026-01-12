@@ -424,6 +424,8 @@ runs:
         )
 
         git fetch origin "$BASE" --depth=50 || true
+        # Fetch the target branch if it exists to ensure we have the latest ref for force-with-lease
+        git fetch origin "$BRANCH" --depth=1 || true
         git checkout -B "$BRANCH"
         git push --force-with-lease origin "$BRANCH"
 
