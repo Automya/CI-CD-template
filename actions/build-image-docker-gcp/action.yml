@@ -35,7 +35,7 @@ runs:
           - [Ver Logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
           ⏳ Iniciando...
 
-    - name: Parse Comment (if applicable)
+    - name: Parse Comment
       if: github.event_name == 'issue_comment'
       id: parse
       uses: ./actions/parse-comment
@@ -44,83 +44,33 @@ runs:
         command_prefix: "build"
 
     - name: Determine Context
-      id: context
-      shell: bash
-      env:
-        EVENT: ${{ github.event_name }}
-        PR_BRANCH: ${{ steps.parse.outputs.branch }}
-        PR_TAG: ${{ steps.parse.outputs.tag }}
-        IS_VALID: ${{ steps.parse.outputs.is_valid }}
-        GH_TOKEN: ${{ env.GH_TOKEN }}
-      run: |
-        TAG=""
-        BRANCH=""
-        SAFE_BRANCH=""
-        LOGICAL_STATUS=""
-        JOB_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-
-        if [[ "$EVENT" == "issue_comment" ]]; then
-           if [[ "$IS_VALID" != "true" ]]; then
-              echo "status=not_build_command" >> "$GITHUB_OUTPUT"
-              exit 0
-           fi
-
-           BRANCH="$PR_BRANCH"
-           if [[ -z "$BRANCH" ]]; then
-             # Fetch branch from PR API
-             PR_URL=$(jq -r '.issue.pull_request.url // empty' < "$GITHUB_EVENT_PATH")
-             BRANCH=$(curl -s -H "Authorization: token $GH_TOKEN" "$PR_URL" | jq -r .head.ref)
-           fi
-           
-           SAFE_BRANCH=$(echo "$BRANCH" | tr '/' '-')
-           TAG="${PR_TAG:-$SAFE_BRANCH}"
-           
-           # Validation logic
-           is_semver() { [[ "$1" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; }
-
-           if [[ "$BRANCH" == "main" && -n "$PR_TAG" && "$PR_TAG" != "main" ]]; then
-             if ! is_semver "$PR_TAG"; then LOGICAL_STATUS="invalid_tag_main"; fi
-           elif [[ "$BRANCH" != "main" && -n "$PR_TAG" ]]; then
-             if is_semver "$PR_TAG"; then LOGICAL_STATUS="invalid_tag_branch"; fi
-           fi
-
-        elif [[ "$EVENT" == "release" ]]; then
-           TAG="${{ github.event.release.tag_name }}"
-           BRANCH="${{ github.event.release.target_commitish }}"
-           if [[ "$BRANCH" != "main" ]]; then LOGICAL_STATUS="invalid_release_branch"; fi
-        else
-           LOGICAL_STATUS="not_supported_event"
-        fi
-
-        echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
-        echo "safe_branch=$SAFE_BRANCH" >> "$GITHUB_OUTPUT"
-        echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-        echo "job_url=$JOB_URL" >> "$GITHUB_OUTPUT"
-        echo "status=$LOGICAL_STATUS" >> "$GITHUB_OUTPUT"
+      id: ctx
+      uses: ./actions/build-context-determine
+      with:
+        event_name: ${{ github.event_name }}
+        is_valid_command: ${{ steps.parse.outputs.is_valid }}
+        parsed_branch: ${{ steps.parse.outputs.branch }}
+        parsed_tag: ${{ steps.parse.outputs.tag }}
+        github_token: ${{ env.GH_TOKEN }}
 
     - name: Checkout code
+      if: steps.ctx.outputs.branch != ''
       uses: actions/checkout@v4
       with:
-        ref: ${{ steps.context.outputs.branch }}
+        ref: ${{ steps.ctx.outputs.branch }}
 
     - name: Setup GCP & Docker
+      if: steps.ctx.outputs.status == ''
       uses: ./actions/setup-gcp
       with:
         region: ${{ env.GCP_REGION }}
 
-    - name: Build and push image
-      if: steps.context.outputs.status == ''
+    - name: Build and Push
+      if: steps.ctx.outputs.status == ''
       id: build
-      shell: bash
-      env: 
-        TAG: ${{ steps.context.outputs.tag }}
-      run: |
-        FULL_IMAGE="$GCP_REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$IMAGE_NAME:$TAG"
-        
-        docker build -t "$FULL_IMAGE" . || { echo "status=build_failed" >> "$GITHUB_OUTPUT"; exit 0; }
-        docker push "$FULL_IMAGE" || { echo "status=push_failed" >> "$GITHUB_OUTPUT"; exit 0; }
-        
-        echo "status=success" >> "$GITHUB_OUTPUT"
+      uses: ./actions/docker-build-push
+      with:
+        image_full_name: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ steps.ctx.outputs.tag }}
 
     - name: GitOps Update (Release only)
       if: github.event_name == 'release' && steps.build.outputs.status == 'success'
@@ -130,47 +80,17 @@ runs:
         gitops_token: ${{ inputs.gitops_token }}
         manifest_path: ${{ inputs.prod_manifest_path }}
         container_name: ${{ inputs.container_name || env.IMAGE_NAME }}
-        image_tag: ${{ steps.context.outputs.tag }}
+        image_tag: ${{ steps.ctx.outputs.tag }}
         target_env: "prod"
 
-    - name: Prepare Notification Message
+    - name: Prepare Report
       if: github.event_name == 'issue_comment'
-      id: msg
-      shell: bash
-      env:
-        # Combine status from context (validation errors) or build (execution errors)
-        STATUS: ${{ steps.context.outputs.status || steps.build.outputs.status }}
-        JOB_URL: ${{ steps.context.outputs.job_url }}
-        IMAGE: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ steps.context.outputs.tag }}
-      run: |
-        PR_MSG=""
-        CHAT_MSG=""
-        
-        case "$STATUS" in
-          "not_build_command") PR_MSG="❌ Error: Comando inválido.";;
-          "invalid_tag_main") PR_MSG="❌ Error: Solo tags semánticos en main.";;
-          "invalid_tag_branch") PR_MSG="❌ Error: Tags semánticos solo en main.";;
-          "build_failed") 
-             PR_MSG="❌ Build fallido."
-             CHAT_MSG="❌ **Build Fallido**\n- [Logs]($JOB_URL)"
-             ;;
-          "push_failed")
-             PR_MSG="❌ Push fallido."
-             CHAT_MSG="❌ **Push Fallido**\n- [Logs]($JOB_URL)"
-             ;;
-          "success")
-             PR_MSG="🎉 Éxito: Imagen subida."
-             CHAT_MSG="✅ **Exito**\n- **Img:** \`$IMAGE\`"
-             ;;
-        esac
-
-        echo "pr_msg<<EOF" >> "$GITHUB_OUTPUT"
-        echo "$PR_MSG" >> "$GITHUB_OUTPUT"
-        echo "EOF" >> "$GITHUB_OUTPUT"
-
-        echo "chat_msg<<EOF" >> "$GITHUB_OUTPUT"
-        echo "$CHAT_MSG" >> "$GITHUB_OUTPUT"
-        echo "EOF" >> "$GITHUB_OUTPUT"
+      id: report
+      uses: ./actions/build-report-message
+      with:
+        status: ${{ steps.ctx.outputs.status || steps.build.outputs.status }}
+        job_url: ${{ steps.ctx.outputs.job_url }}
+        image_full_name: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ steps.ctx.outputs.tag }}
 
     - name: Notify Result
       if: github.event_name == 'issue_comment'
@@ -179,5 +99,5 @@ runs:
         github_token: ${{ env.GH_TOKEN }}
         pr_number: ${{ github.event.issue.number }}
         webhook_url: ${{ inputs.google_chat_webhook }}
-        pr_message: ${{ steps.msg.outputs.pr_msg }}
-        chat_message: ${{ steps.msg.outputs.chat_msg }}
+        pr_message: ${{ steps.report.outputs.pr_message }}
+        chat_message: ${{ steps.report.outputs.chat_message }}

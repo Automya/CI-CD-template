@@ -58,100 +58,53 @@ runs:
         comment_body: ${{ github.event.comment.body }}
         command_prefix: "sync"
 
-    - name: Validate & Setup Context
-      if: steps.parse.outputs.is_valid == 'true'
-      shell: bash
-      env:
-        SYNC_BRANCH: ${{ steps.parse.outputs.branch }}
-        ENV_RAW: ${{ steps.parse.outputs.env }}
-      run: |
-        if [ -z "$SYNC_BRANCH" ] || [ -z "$ENV_RAW" ]; then
-           echo "SKIP=true" >> $GITHUB_ENV
-           exit 0
-        fi
-
-        ENV_LOWER=$(echo "$ENV_RAW" | tr '[:upper:]' '[:lower:]')
-        case "$ENV_LOWER" in
-          staging|stage|st|stag|stg)
-            TARGET_ENV="staging"
-            TARGET_CONFIGMAP="${{ inputs.staging_configmap }}"
-            SOURCE_FILE_PATH="${{ inputs.staging_source_file }}"
-            ;;
-          prod|production|prd)
-            TARGET_ENV="prod"
-            TARGET_CONFIGMAP="${{ inputs.prod_configmap }}"
-            SOURCE_FILE_PATH="${{ inputs.prod_source_file }}"
-            ;;
-          *)
-            echo "Error: Entorno no soportado: $ENV_RAW"
-            exit 1
-            ;;
-        esac
-
-        echo "SYNC_BRANCH=$SYNC_BRANCH" >> $GITHUB_ENV
-        echo "TARGET_ENV=$TARGET_ENV" >> $GITHUB_ENV
-        echo "TARGET_CONFIGMAP=$TARGET_CONFIGMAP" >> $GITHUB_ENV
-        echo "SOURCE_FILE_PATH=$SOURCE_FILE_PATH" >> $GITHUB_ENV
-        echo "SKIP=false" >> $GITHUB_ENV
-
-        # Determine checkout ref (PR or branch)
-        PR_NUMBER="${{ github.event.issue.number }}"
-        if [ -z "$PR_NUMBER" ]; then PR_NUMBER="${{ github.event.pull_request.number }}"; fi
-        
-        SOURCE_REPO=""
-        CHECKOUT_REF=""
-
-        if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "null" ]; then
-           API_URL="https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER"
-           PR_DATA=$(curl -sS -H "Authorization: token ${{ inputs.github_token }}" "$API_URL" || echo "{}")
-           SOURCE_REPO=$(echo "$PR_DATA" | jq -r '.head.repo.full_name // empty')
-           CHECKOUT_REF=$(echo "$PR_DATA" | jq -r '.head.ref // empty')
-        fi
-
-        if [ -n "$SOURCE_REPO" ]; then
-           echo "SOURCE_REPO=$SOURCE_REPO" >> $GITHUB_ENV
-           echo "CHECKOUT_REF=$CHECKOUT_REF" >> $GITHUB_ENV
-        else
-           echo "SOURCE_REPO=${{ github.repository }}" >> $GITHUB_ENV
-           echo "CHECKOUT_REF=$SYNC_BRANCH" >> $GITHUB_ENV
-        fi
+    - name: Determine Context
+      id: ctx
+      uses: ./actions/sync-context-determine
+      with:
+        staging_source: ${{ inputs.staging_source_file }}
+        prod_source: ${{ inputs.prod_source_file }}
+        staging_configmap: ${{ inputs.staging_configmap }}
+        prod_configmap: ${{ inputs.prod_configmap }}
+        parsed_branch: ${{ steps.parse.outputs.branch }}
+        parsed_env: ${{ steps.parse.outputs.env }}
+        is_valid_command: ${{ steps.parse.outputs.is_valid }}
+        github_token: ${{ inputs.github_token }}
 
     - name: Notify Start
-      if: ${{ env.SKIP == 'false' }}
+      if: ${{ steps.ctx.outputs.skip == 'false' }}
       uses: ./actions/notify
       with:
         github_token: ${{ env.COMMENT_TOKEN }}
         pr_number: ${{ github.event.issue.number || github.event.pull_request.number }}
-        pr_message: "🚀 Sincronizando configuración desde rama `${{ env.SYNC_BRANCH }}` hacia `${{ env.TARGET_ENV }}`..."
+        pr_message: "🚀 Sincronizando configuración desde rama `${{ steps.ctx.outputs.sync_branch }}` hacia `${{ steps.ctx.outputs.target_env }}`..."
 
     - name: Checkout Source Repo
-      if: ${{ env.SKIP == 'false' }}
+      if: ${{ steps.ctx.outputs.skip == 'false' }}
       uses: actions/checkout@v4
       with:
-        repository: ${{ env.SOURCE_REPO }}
-        ref: ${{ env.CHECKOUT_REF }}
+        repository: ${{ steps.ctx.outputs.source_repo }}
+        ref: ${{ steps.ctx.outputs.checkout_ref }}
         path: source-repo
 
     - name: Normalize GitOps Repo
-      if: ${{ env.SKIP == 'false' }}
-      shell: bash
-      run: |
-        RAW="${{ inputs.gitops_repo }}"
-        repo="${RAW#https://github.com/}"
-        repo="${repo%.git}"
-        echo "GITOPS_REPO=$repo" >> $GITHUB_ENV
+      if: ${{ steps.ctx.outputs.skip == 'false' }}
+      id: norm
+      uses: ./actions/util-normalize-repo
+      with:
+        repo_input: ${{ inputs.gitops_repo }}
 
     - name: Checkout GitOps Repo
-      if: ${{ env.SKIP == 'false' }}
+      if: ${{ steps.ctx.outputs.skip == 'false' }}
       uses: actions/checkout@v4
       with:
-        repository: ${{ env.GITOPS_REPO }}
+        repository: ${{ steps.norm.outputs.repo_normalized }}
         token: ${{ inputs.github_token }}
         path: gitops-repo
         ref: ${{ inputs.branch }}
 
     - name: Ensure yq
-      if: ${{ env.SKIP == 'false' }}
+      if: ${{ steps.ctx.outputs.skip == 'false' }}
       shell: bash
       run: |
         if ! command -v yq >/dev/null 2>&1; then
@@ -160,12 +113,12 @@ runs:
         fi
 
     - name: Update ConfigMap
-      if: ${{ env.SKIP == 'false' }}
+      if: ${{ steps.ctx.outputs.skip == 'false' }}
       shell: bash
       working-directory: gitops-repo
       env:
-        SOURCE_FILE: ${{ github.workspace }}/source-repo/${{ env.SOURCE_FILE_PATH }}
-        TARGET_FILE: ${{ env.TARGET_CONFIGMAP }}
+        SOURCE_FILE: ${{ github.workspace }}/source-repo/${{ steps.ctx.outputs.source_file_path }}
+        TARGET_FILE: ${{ steps.ctx.outputs.target_configmap }}
         KEY: ${{ inputs.configmap_key }}
       run: |
         set -e
@@ -177,21 +130,21 @@ runs:
         yq eval -i ".data[\"$KEY\"] = load_str(\"$SOURCE_FILE\") | .data[\"$KEY\"] style=\"literal\"" "$TARGET_FILE"
 
     - name: Create PR
-      if: ${{ env.SKIP == 'false' }}
+      if: ${{ steps.ctx.outputs.skip == 'false' }}
       id: create-pr
       uses: ./actions/create-pr
       with:
         token: ${{ inputs.github_token }}
-        repo: ${{ env.GITOPS_REPO }}
+        repo: ${{ steps.norm.outputs.repo_normalized }}
         base_branch: ${{ inputs.branch }}
-        head_branch: "config-sync/${{ env.TARGET_ENV }}-${{ github.run_id }}"
-        commit_message: "${{ inputs.commit_message }} (${{ env.TARGET_ENV }})"
-        pr_title: "${{ inputs.commit_message }} (${{ env.TARGET_ENV }})"
+        head_branch: "config-sync/${{ steps.ctx.outputs.target_env }}-${{ github.run_id }}"
+        commit_message: "${{ inputs.commit_message }} (${{ steps.ctx.outputs.target_env }})"
+        pr_title: "${{ inputs.commit_message }} (${{ steps.ctx.outputs.target_env }})"
         pr_body: "Automatic update of config from workflow run ${{ github.run_id }}"
         working_directory: "gitops-repo"
 
     - name: Report Result
-      if: always() && env.SKIP == 'false'
+      if: always() && steps.ctx.outputs.skip == 'false'
       uses: ./actions/notify
       with:
         github_token: ${{ env.COMMENT_TOKEN }}

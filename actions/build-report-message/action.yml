@@ -1,0 +1,67 @@
+name: "Build Report Message"
+description: "Generates notification messages for build results"
+inputs:
+  status:
+    description: "Build status (success, build_failed, push_failed, logical errors...)"
+    required: true
+  job_url:
+    description: "URL to logs"
+    required: true
+  image_full_name:
+    description: "Full docker image name (registry/project/repo/image:tag)"
+    required: false
+
+outputs:
+  pr_message:
+    description: "Message for PR comment"
+    value: ${{ steps.msg.outputs.pr_msg }}
+  chat_message:
+    description: "Message for Chat"
+    value: ${{ steps.msg.outputs.chat_msg }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Generate
+      id: msg
+      shell: bash
+      env:
+        STATUS: ${{ inputs.status }}
+        JOB_URL: ${{ inputs.job_url }}
+        IMAGE: ${{ inputs.image_full_name }}
+      run: |
+        PR_MSG=""
+        CHAT_MSG=""
+        
+        case "$STATUS" in
+          "not_build_command") PR_MSG="❌ Error: Comando inválido.";;
+          "error_branch_unknown") PR_MSG="❌ Error: No se pudo determinar la rama origen.";;
+          "invalid_tag_main") PR_MSG="❌ Error: Solo tags semánticos en main.";;
+          "invalid_tag_branch") PR_MSG="❌ Error: Tags semánticos solo en main.";;
+          "invalid_release_branch") PR_MSG="❌ Error: Release con tag no apunta a main.";;
+          "not_supported_event") PR_MSG="❌ Error: Tipo de evento no soportado.";;
+          "build_failed") 
+             PR_MSG="❌ Build fallido."
+             CHAT_MSG="❌ **Build Fallido**\n- **Img:** \`$IMAGE\`\n- [Logs]($JOB_URL)"
+             ;;
+          "push_failed")
+             PR_MSG="❌ Push fallido."
+             CHAT_MSG="❌ **Push Fallido**\n- **Img:** \`$IMAGE\`\n- [Logs]($JOB_URL)"
+             ;;
+          "success")
+             PR_MSG="🎉 Éxito: Imagen subida."
+             CHAT_MSG="✅ **Exito**\n- **Img:** \`$IMAGE\`\n- [Logs]($JOB_URL)"
+             ;;
+          *)
+             PR_MSG="❓ Estado desconocido: $STATUS"
+             ;;
+        esac
+
+        echo "pr_msg<<EOF" >> "$GITHUB_OUTPUT"
+        echo "$PR_MSG" >> "$GITHUB_OUTPUT"
+        echo "EOF" >> "$GITHUB_OUTPUT"
+
+        echo "chat_msg<<EOF" >> "$GITHUB_OUTPUT"
+        echo "$CHAT_MSG" >> "$GITHUB_OUTPUT"
+        echo "EOF" >> "$GITHUB_OUTPUT"
+
