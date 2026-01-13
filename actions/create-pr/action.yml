@@ -1,0 +1,94 @@
+name: "Create GitOps PR"
+description: "Commits changes, pushes to a new branch, and creates a PR with auto-merge."
+inputs:
+  token:
+    description: "GitHub Token with write access"
+    required: true
+  repo:
+    description: "Repository owner/repo"
+    required: true
+  base_branch:
+    description: "Base branch to target"
+    required: true
+  head_branch:
+    description: "Name of the new branch"
+    required: true
+  commit_message:
+    description: "Commit message"
+    required: true
+  pr_title:
+    description: "PR Title"
+    required: true
+  pr_body:
+    description: "PR Body"
+    required: true
+  files_to_commit:
+    description: "Space-separated list of files to add (default: .)"
+    required: false
+    default: "."
+  working_directory:
+    description: "Working directory where the repo is checked out"
+    required: false
+    default: "."
+
+outputs:
+  pr_url:
+    description: "URL of the created PR"
+    value: ${{ steps.create.outputs.pr_url }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Push and Create PR
+      id: create
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REPO: ${{ inputs.repo }}
+        BASE: ${{ inputs.base_branch }}
+        HEAD: ${{ inputs.head_branch }}
+        TITLE: ${{ inputs.pr_title }}
+        BODY: ${{ inputs.pr_body }}
+        MSG: ${{ inputs.commit_message }}
+        FILES: ${{ inputs.files_to_commit }}
+      run: |
+        set -euo pipefail
+        
+        # Git Config
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        
+        # Branch
+        git fetch origin "$BASE" --depth=50 || true
+        git checkout -B "$HEAD"
+        
+        # Add & Commit
+        # Split FILES by space and add them
+        git add $FILES
+        git commit -m "$MSG"
+        
+        # Push
+        git push --force-with-lease origin "$HEAD"
+        
+        # Create PR
+        echo "Creating PR..."
+        PR_URL=$(gh pr create \
+          --repo "$REPO" \
+          --base "$BASE" \
+          --head "$HEAD" \
+          --title "$TITLE" \
+          --body "$BODY" \
+          2>&1 | tee /dev/stderr | grep -oE 'https://github.com/[^[:space:]]+' || true)
+
+        if [ -z "$PR_URL" ]; then
+          echo "❌ Error creating PR"
+          exit 1
+        fi
+        
+        echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
+        
+        # Auto-merge
+        echo "Configuring auto-merge..."
+        gh pr merge "$PR_URL" --auto --merge --delete-branch || gh pr merge "$PR_URL" --merge --delete-branch || true
+

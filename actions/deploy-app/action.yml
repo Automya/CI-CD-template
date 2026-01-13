@@ -71,48 +71,20 @@ runs:
         fi
         echo "SKIP=false" >> $GITHUB_ENV
 
-    - name: Parse deploy command from PR comment
+    - name: Parse Deploy Command
+      id: parse
+      uses: ./actions/parse-comment
+      with:
+        comment_body: ${{ github.event.comment.body }}
+        command_prefix: "deploy"
+
+    - name: Validate Context
+      if: steps.parse.outputs.is_valid == 'true'
       shell: bash
+      env:
+        TAG: ${{ steps.parse.outputs.tag }}
+        ENV_RAW: ${{ steps.parse.outputs.env }}
       run: |
-        set -euo pipefail
-        BODY="${{ github.event.comment.body || '' }}"
-        
-        echo "Comentario recibido:"
-        echo "$BODY"
-        
-        if echo "$BODY" | grep -qE '^\:white_check_mark\:|^\:x\:|^Imagen actualizada|^No se pudo actualizar'; then
-          echo "El comentario parece ser una respuesta automática de esta acción. Se ignora."
-          echo "SKIP=true" >> $GITHUB_ENV
-          exit 0
-        fi
-
-        if [ -z "$BODY" ]; then
-          echo "No hay comentario disponible."
-          echo "SKIP=true" >> $GITHUB_ENV
-          exit 0
-        fi
-
-        BODY_TRIMMED=$(echo "$BODY" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-        
-        if ! echo "$BODY_TRIMMED" | grep -qi '^deploy'; then
-           echo "El comentario no comienza con 'deploy'. Se ignora."
-           echo "SKIP=true" >> $GITHUB_ENV
-           exit 0
-        fi
-
-        echo "SKIP=false" >> $GITHUB_ENV
-        
-        if ! echo "$BODY_TRIMMED" | grep -qiE '^deploy[[:space:]]+-t[[:space:]]+[^[:space:]]+[[:space:]]+-e[[:space:]]+[^[:space:]]+'; then
-          echo "❌ Formato incorrecto."
-          echo "Error de sintaxis: El comando no cumple el formato requerido." > "$GITHUB_WORKSPACE/action_error.txt"
-          echo "Uso correcto: \`deploy -t <tag> -e <staging|prod>\`" >> "$GITHUB_WORKSPACE/action_error.txt"
-          echo "Recibido: \`$BODY_TRIMMED\`" >> "$GITHUB_WORKSPACE/action_error.txt"
-          exit 1
-        fi
-
-        TAG=$(echo "$BODY_TRIMMED" | grep -oE '\-t[[:space:]]+([^[:space:]]+)' | sed -E 's/\-t[[:space:]]+//' | head -n1 || echo "")
-        ENV_RAW=$(echo "$BODY_TRIMMED" | grep -oE '\-e[[:space:]]+([^[:space:]]+)' | sed -E 's/\-e[[:space:]]+//' | head -n1 || echo "")
-
         if [ -z "$TAG" ] || [ -z "$ENV_RAW" ]; then
           echo "Error interno extrayendo variables." > "$GITHUB_WORKSPACE/action_error.txt"
           exit 1
@@ -138,13 +110,24 @@ runs:
 
         echo "DEPLOY_TAG=$TAG" >> $GITHUB_ENV
         echo "TARGET_ENV=$TARGET_ENV" >> $GITHUB_ENV
-        
-        echo "Comando detectado y validado:"
-        echo "  Tag: $TAG"
-        echo "  Entorno: $TARGET_ENV"
+        echo "STOP_EXECUTION=false" >> $GITHUB_ENV
+
+    - name: Handle Invalid Command
+      if: steps.parse.outputs.is_valid == 'false'
+      shell: bash
+      env:
+        ERR_MSG: ${{ steps.parse.outputs.error_msg }}
+      run: |
+        if [ "$ERR_MSG" == "ignored_bot_response" ] || [ "$ERR_MSG" == "wrong_prefix" ]; then
+          echo "SKIP=true" >> $GITHUB_ENV
+        else
+          echo "Error de sintaxis: El comando no cumple el formato requerido." > "$GITHUB_WORKSPACE/action_error.txt"
+          echo "Uso correcto: \`deploy -t <tag> -e <staging|prod>\`" >> "$GITHUB_WORKSPACE/action_error.txt"
+          exit 1
+        fi
 
     - name: Notify Start Deployment
-      if: ${{ env.SKIP == 'false' }}
+      if: ${{ env.SKIP == 'false' && env.STOP_EXECUTION == 'false' }}
       uses: ./actions/notify
       with:
         github_token: ${{ env.COMMENT_TOKEN }}
@@ -160,7 +143,7 @@ runs:
           ⏳ Procesando...
 
     - name: Normalize GitOps repository reference
-      if: ${{ env.SKIP == 'false' && env.STOP_EXECUTION != 'true' }}
+      if: ${{ env.SKIP == 'false' && env.STOP_EXECUTION == 'false' }}
       shell: bash
       run: |
         set -euo pipefail
@@ -185,27 +168,8 @@ runs:
         echo "GITOPS_REPO=$repo" >> $GITHUB_ENV
         echo "Repositorio GitOps normalizado: $repo"
 
-    - name: Checkout GitOps repository
-      if: ${{ env.SKIP == 'false' && env.STOP_EXECUTION != 'true' }}
-      uses: actions/checkout@v4
-      with:
-        repository: ${{ env.GITOPS_REPO }}
-        token: ${{ inputs.github_token }}
-        path: gitops-repo
-
-    - name: Ensure yq is available
-      if: ${{ env.SKIP == 'false' && env.STOP_EXECUTION != 'true' }}
-      shell: bash
-      run: |
-        set -euo pipefail
-        if ! command -v yq >/dev/null 2>&1; then
-          curl -sSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq
-          chmod +x /usr/local/bin/yq
-        fi
-        yq --version
-
     - name: Select manifest path
-      if: ${{ env.SKIP == 'false' && env.STOP_EXECUTION != 'true' }}
+      if: ${{ env.SKIP == 'false' && env.STOP_EXECUTION == 'false' }}
       shell: bash
       run: |
         set -euo pipefail
@@ -215,192 +179,22 @@ runs:
           manifest="${{ inputs.staging_manifest_path }}"
         fi
         echo "MANIFEST_PATH=${manifest}" >> $GITHUB_ENV
-        echo "Se usará el manifiesto: ${manifest}"
 
-    - name: Verify image existence in Artifact Registry
-      if: ${{ env.SKIP == 'false' && env.STOP_EXECUTION != 'true' }}
-      shell: bash
-      working-directory: gitops-repo
-      env:
-        TAG: ${{ env.DEPLOY_TAG }}
-        CONTAINER_NAME: ${{ inputs.image_name }}
-        FILE: ${{ env.MANIFEST_PATH }}
-      run: |
-        set -euo pipefail
-        ERRFILE="$GITHUB_WORKSPACE/action_error.txt"
-        
-        if [ ! -f "$FILE" ]; then
-          echo "No se encuentra el archivo de manifiesto: $FILE" > "$ERRFILE"
-          exit 1
-        fi
-
-        # Extraer imagen actual usando yq para obtener el repo base
-        CURRENT_IMAGE=$(yq eval ".spec.template.spec.containers[] | select(.name == \"$CONTAINER_NAME\") | .image" "$FILE" | head -n 1)
-
-        if [ -z "$CURRENT_IMAGE" ] || [ "$CURRENT_IMAGE" = "null" ]; then
-           echo "No se encontró el contenedor '$CONTAINER_NAME' en '$FILE' o no tiene imagen." | tee -a "$ERRFILE"
-           exit 1
-        fi
-
-        # Obtener repo base (quitar tag :tag o digest @sha256:...)
-        BASE_IMAGE=$(echo "$CURRENT_IMAGE" | sed -E 's/[:@].*$//')
-        TARGET_IMAGE="${BASE_IMAGE}:${TAG}"
-        
-        echo "Imagen base detectada: $BASE_IMAGE"
-        echo "Verificando existencia de: $TARGET_IMAGE"
-        
-        if ! gcloud container images describe "$TARGET_IMAGE" --format='value(image_summary.digest)' &>/dev/null; then
-          echo "❌ Error: La imagen no existe en el registro."
-          echo "Error: La imagen '$TARGET_IMAGE' no se encontró en Artifact Registry/GCR." > "$ERRFILE"
-          echo "Verifica que el pipeline de Build haya finalizado correctamente y el tag '$TAG' sea válido." >> "$ERRFILE"
-          exit 1
-        fi
-        
-        echo "✅ Imagen verificada exitosamente."
-
-    - name: Update manifest with new tag
-      if: ${{ env.SKIP == 'false' && env.STOP_EXECUTION != 'true' }}
-      shell: bash
-      working-directory: gitops-repo
-      env:
-        TAG: ${{ env.DEPLOY_TAG }}
-        CONTAINER_NAME: ${{ inputs.image_name }}
-        FILE: ${{ env.MANIFEST_PATH }}
-      run: |
-        set -euo pipefail
-        ERRFILE="$GITHUB_WORKSPACE/action_error.txt"
-        trap 'rc=$?; echo "ERROR actualizando manifiesto (exit $rc)" >> "$ERRFILE"; exit $rc' ERR
-
-        if [ ! -f "$FILE" ]; then
-          echo "No existe el manifiesto $FILE" | tee -a "$ERRFILE"
-          exit 1
-        fi
-
-        container_count=$(yq eval '.spec.template.spec.containers | length' "$FILE" 2>/dev/null || echo "0")
-        if [ "$container_count" = "null" ] || [ "$container_count" = "0" ]; then
-          echo "No se encontraron contenedores en $FILE" | tee -a "$ERRFILE"
-          exit 1
-        fi
-
-        found=0
-        i=0
-        while [ "$i" -lt "$container_count" ]; do
-          container_name=$(yq eval -r ".spec.template.spec.containers[$i].name" "$FILE" 2>/dev/null || echo "")
-          if [ "$container_name" = "$CONTAINER_NAME" ]; then
-            current_image=$(yq eval -r ".spec.template.spec.containers[$i].image" "$FILE" 2>/dev/null || echo "")
-            if [ -z "$current_image" ] || [ "$current_image" = "null" ]; then
-              echo "El contenedor '${CONTAINER_NAME}' no tiene imagen definida en $FILE" | tee -a "$ERRFILE"
-              exit 1
-            fi
-
-            base="$current_image"
-            if [[ "$base" == *@* ]]; then
-              base="${base%%@*}"
-            elif [[ "$base" == *:* ]]; then
-              base="${base%:*}"
-            fi
-            if [ -z "$base" ]; then
-              base="$current_image"
-            fi
-
-            NEW_IMAGE="${base}:${TAG}"
-            
-            # Verificar si la imagen ya es la correcta ANTES de modificar
-            if [ "$current_image" = "$NEW_IMAGE" ]; then
-              echo "La imagen ya está en ${NEW_IMAGE}. Se requiere reinicio."
-              echo "NEEDS_RESTART=true" >> $GITHUB_ENV
-              echo "GITOPS_PR_URL=" >> $GITHUB_ENV
-              exit 0
-            fi
-            
-            yq eval -i ".spec.template.spec.containers[$i].image = \"${NEW_IMAGE}\"" "$FILE"
-            echo "Actualizado contenedor '${CONTAINER_NAME}': ${current_image} -> ${NEW_IMAGE}"
-            found=1
-            break
-          fi
-          i=$((i + 1))
-        done
-
-        if [ "$found" -eq 0 ]; then
-          echo "No se encontró el contenedor '${CONTAINER_NAME}' en $FILE" | tee -a "$ERRFILE"
-          exit 1
-        fi
-
-        echo "NEEDS_RESTART=false" >> $GITHUB_ENV
-
-        git config user.name "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
-        git add "$FILE"
-        git commit -m "chore: update ${CONTAINER_NAME} image to ${TAG}"
-
-    - name: Push branch and create PR in GitOps repo
-      if: ${{ env.SKIP == 'false' && env.NEEDS_RESTART != 'true' && env.STOP_EXECUTION != 'true' }}
-      shell: bash
-      working-directory: gitops-repo
-      env:
-        TAG: ${{ env.DEPLOY_TAG }}
-        TARGET_ENV: ${{ env.TARGET_ENV }}
-        GH_TOKEN: ${{ inputs.github_token }}
-      run: |
-        set -euo pipefail
-        ERRFILE="$GITHUB_WORKSPACE/action_error.txt"
-        trap 'rc=$?; echo "ERROR creando PR/push - exit code $rc" >> "$ERRFILE"; exit $rc' ERR
-
-        owner_repo="${{ env.GITOPS_REPO }}"
-        BASE="${{ inputs.base_branch }}"
-        IMAGE="${{ inputs.image_name }}"
-
-        BRANCH="deploy/${TARGET_ENV}/${IMAGE}-${TAG}"
-        PR_TITLE="${{ inputs.pr_title }} (${TARGET_ENV})"
-        
-        PR_BODY=$(cat <<EOF
-        Actualización automática solicitada desde comentario:
-
-        \`\`\`
-        ${{ github.event.comment.body || '' }}
-        \`\`\`
-
-        - Contenedor: ${IMAGE}
-        - Tag nuevo: ${TAG}
-        - Entorno: ${TARGET_ENV}
-        EOF
-        )
-
-        git fetch origin "$BASE" --depth=50 || true
-        git checkout -B "$BRANCH"
-        git push --force-with-lease origin "$BRANCH"
-
-        echo "Creando PR..."
-        pr_url=$(gh pr create \
-          --repo "$owner_repo" \
-          --base "$BASE" \
-          --head "$BRANCH" \
-          --title "$PR_TITLE" \
-          --body "$PR_BODY" 2>&1 | tee /dev/stderr | grep -oE 'https://github.com/[^[:space:]]+' || true)
-
-        if [ -z "$pr_url" ]; then
-          echo "La creación de la PR falló" | tee -a "$ERRFILE"
-          exit 1
-        fi
-
-        echo "GITOPS_PR_URL=$pr_url" >> $GITHUB_ENV
-        echo "PR creada: $pr_url"
-        
-        echo "Configurando auto-merge..."
-        if gh pr merge "$pr_url" --auto --merge --delete-branch 2>&1; then
-          echo "Auto-merge configurado. La PR se mergeará automáticamente cuando pasen los checks requeridos."
-        else
-          echo "Advertencia: No se pudo configurar auto-merge (puede que no esté habilitado en el repo o que la PR ya esté lista para merge)."
-          echo "Intentando merge directo..."
-          if gh pr merge "$pr_url" --merge --delete-branch 2>&1; then
-            echo "PR mergeada exitosamente."
-          else
-            echo "No se pudo hacer merge automático ni directo. Revisa manualmente: $pr_url" | tee -a "$ERRFILE"
-          fi
-        fi
+    - name: GitOps Update & PR
+      if: ${{ env.SKIP == 'false' && env.STOP_EXECUTION == 'false' }}
+      id: gitops
+      uses: ./actions/gitops-pr
+      with:
+        gitops_repo: ${{ env.GITOPS_REPO }}
+        gitops_token: ${{ inputs.github_token }}
+        manifest_path: ${{ env.MANIFEST_PATH }}
+        container_name: ${{ inputs.image_name }}
+        image_tag: ${{ env.DEPLOY_TAG }}
+        target_env: ${{ env.TARGET_ENV }}
+        base_branch: ${{ inputs.base_branch }}
 
     - name: Get GKE credentials (Staging)
-      if: ${{ env.SKIP == 'false' && env.NEEDS_RESTART == 'true' && env.TARGET_ENV == 'staging' && env.STOP_EXECUTION != 'true' }}
+      if: ${{ env.SKIP == 'false' && env.STOP_EXECUTION == 'false' && steps.gitops.outputs.needs_restart == 'true' && env.TARGET_ENV == 'staging' }}
       uses: google-github-actions/get-gke-credentials@v1
       with:
         cluster_name: ${{ inputs.staging_cluster_name }}
@@ -408,7 +202,7 @@ runs:
         project_id: ${{ inputs.project_id }}
 
     - name: Get GKE credentials (Prod)
-      if: ${{ env.SKIP == 'false' && env.NEEDS_RESTART == 'true' && env.TARGET_ENV == 'prod' && env.STOP_EXECUTION != 'true' }}
+      if: ${{ env.SKIP == 'false' && env.STOP_EXECUTION == 'false' && steps.gitops.outputs.needs_restart == 'true' && env.TARGET_ENV == 'prod' }}
       uses: google-github-actions/get-gke-credentials@v1
       with:
         cluster_name: ${{ inputs.prod_cluster_name }}
@@ -416,7 +210,7 @@ runs:
         project_id: ${{ inputs.project_id }}
 
     - name: Restart Deployment
-      if: ${{ env.SKIP == 'false' && env.NEEDS_RESTART == 'true' && env.STOP_EXECUTION != 'true' }}
+      if: ${{ env.SKIP == 'false' && env.STOP_EXECUTION == 'false' && steps.gitops.outputs.needs_restart == 'true' }}
       shell: bash
       env:
         DEPLOYMENT_NAME: ${{ inputs.deployment_name || inputs.image_name }}
@@ -435,10 +229,10 @@ runs:
       env:
         JOB_STATUS: ${{ job.status }}
         ERRFILE: ${{ github.workspace }}/action_error.txt
-        GITOPS_PR_URL: ${{ env.GITOPS_PR_URL }}
+        GITOPS_PR_URL: ${{ steps.gitops.outputs.pr_url }}
         DEPLOY_TAG: ${{ env.DEPLOY_TAG }}
         TARGET_ENV: ${{ env.TARGET_ENV }}
-        NEEDS_RESTART: ${{ env.NEEDS_RESTART }}
+        NEEDS_RESTART: ${{ steps.gitops.outputs.needs_restart }}
         RESTART_SUCCESS: ${{ env.RESTART_SUCCESS }}
       with:
         script: |
@@ -446,7 +240,7 @@ runs:
           const commentBody = context.payload.comment?.body || '';
           
           if (/^✅|^❌|^Imagen actualizada|^No se pudo actualizar/i.test(commentBody)) {
-            core.info('El comentario parece ser una respuesta automática. No se publicará respuesta para evitar loops.');
+            core.info('El comentario parece ser una respuesta automática.');
             return;
           }
           
@@ -463,21 +257,19 @@ runs:
               fs.readFileSync(errFile, 'utf8') + '\n```\n';
             if (prUrl) body += 'Se alcanzó a crear la PR en GitOps: ' + prUrl + '\n';
           } else if (jobStatus === 'failure' || jobStatus === 'cancelled') {
-            body = '❌ **Error Crítico:** El workflow falló inesperadamente antes de completar el despliegue.\n' +
-                   'Revisa los logs de la acción "Deploy GitOps Image" para más detalles.';
+            body = '❌ **Error Crítico:** Workflow fallido.';
           } else if (prUrl) {
             body = '✅ Tag "' + deployTag + '" desplegado en "' + targetEnv + '".\n' +
               'PR en GitOps: ' + prUrl + '\n';
           } else if (process.env.NEEDS_RESTART === 'true') {
              if (process.env.RESTART_SUCCESS === 'true') {
                 body = '✅ Tag "' + deployTag + '" ya existía en "' + targetEnv + '".\n' +
-                       'Se ha reiniciado el deployment exitosamente para aplicar cambios.';
+                       'Se ha reiniciado el deployment exitosamente.';
              } else {
-                body = '❌ Tag "' + deployTag + '" ya existía, pero falló el reinicio del deployment.\n' +
-                       'Revisa los logs de la acción para más detalles.';
+                body = '❌ Tag "' + deployTag + '" ya existía, pero falló el reinicio.';
              }
           } else {
-            body = '✅Tag "' + deployTag + '" ya estaba aplicado en "' + targetEnv + '"; no se creó PR ni se reinició.\n';
+            body = '✅Tag "' + deployTag + '" ya estaba aplicado en "' + targetEnv + '".\n';
           }
 
           core.setOutput('deploy_message', body);

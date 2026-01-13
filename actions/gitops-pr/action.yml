@@ -1,0 +1,103 @@
+name: "GitOps Update & PR"
+description: "Updates a manifest file, pushes changes to a new branch and creates a PR."
+inputs:
+  gitops_repo:
+    description: "Repo GitOps (owner/repo)"
+    required: true
+  gitops_token:
+    description: "Token with write access"
+    required: true
+  manifest_path:
+    description: "Path to the manifest file"
+    required: true
+  container_name:
+    description: "Container name to update"
+    required: true
+  image_tag:
+    description: "New image tag"
+    required: true
+  base_branch:
+    description: "Base branch"
+    required: false
+    default: "main"
+  target_env:
+    description: "Target environment (staging/prod) for branch naming"
+    required: false
+    default: "prod"
+
+outputs:
+  pr_url:
+    description: "URL of the created PR"
+    value: ${{ steps.create-pr.outputs.pr_url }}
+  needs_restart:
+    description: "True if no changes were made (image already correct)"
+    value: ${{ steps.update.outputs.needs_restart }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Ensure yq is available
+      shell: bash
+      run: |
+        if ! command -v yq >/dev/null 2>&1; then
+          curl -sSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq
+          chmod +x /usr/local/bin/yq
+        fi
+
+    - name: Checkout GitOps repository
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ inputs.gitops_repo }}
+        token: ${{ inputs.gitops_token }}
+        path: gitops-repo
+
+    - name: Update manifest
+      id: update
+      shell: bash
+      working-directory: gitops-repo
+      env:
+        FILE: ${{ inputs.manifest_path }}
+        CONTAINER: ${{ inputs.container_name }}
+        TAG: ${{ inputs.image_tag }}
+      run: |
+        set -euo pipefail
+        
+        if [ ! -f "$FILE" ]; then
+          echo "❌ Error: No existe el manifiesto $FILE"
+          exit 1
+        fi
+
+        CURRENT_IMAGE=$(yq eval ".spec.template.spec.containers[] | select(.name == \"$CONTAINER\") | .image" "$FILE" | head -n 1)
+
+        if [ -z "$CURRENT_IMAGE" ] || [ "$CURRENT_IMAGE" = "null" ]; then
+           echo "❌ Error: No se encontró el contenedor '$CONTAINER' en '$FILE'"
+           exit 1
+        fi
+
+        BASE_IMAGE=$(echo "$CURRENT_IMAGE" | sed -E 's/[:@].*$//')
+        NEW_IMAGE="${BASE_IMAGE}:${TAG}"
+
+        if [ "$CURRENT_IMAGE" = "$NEW_IMAGE" ]; then
+          echo "⚠️ El manifiesto ya tiene la imagen correcta ($NEW_IMAGE)."
+          echo "needs_restart=true" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        echo "Updating $CONTAINER to $NEW_IMAGE"
+        yq eval -i "(.spec.template.spec.containers[] | select(.name == \"$CONTAINER\").image) = \"$NEW_IMAGE\"" "$FILE"
+        echo "needs_restart=false" >> "$GITHUB_OUTPUT"
+
+    - name: Create PR
+      id: create-pr
+      if: steps.update.outputs.needs_restart != 'true'
+      uses: ./actions/create-pr
+      with:
+        token: ${{ inputs.gitops_token }}
+        repo: ${{ inputs.gitops_repo }}
+        base_branch: ${{ inputs.base_branch }}
+        head_branch: "deploy/${{ inputs.target_env }}/${{ inputs.container_name }}-${{ inputs.image_tag }}"
+        commit_message: "chore(${{ inputs.target_env }}): update ${{ inputs.container_name }} to ${{ inputs.image_tag }}"
+        pr_title: "chore(${{ inputs.target_env }}): update ${{ inputs.container_name }} to ${{ inputs.image_tag }}"
+        pr_body: "Release automático ${{ inputs.image_tag }}."
+        files_to_commit: ${{ inputs.manifest_path }}
+        working_directory: "gitops-repo"

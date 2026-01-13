@@ -5,10 +5,10 @@ description: >
 
 inputs:
   staging_source_file:
-    description: 'Path to the local source file for Staging (e.g., application-staging.yml).'
+    description: 'Path to the local source file for Staging.'
     required: true
   prod_source_file:
-    description: 'Path to the local source file for Production (e.g., application-prod.yml).'
+    description: 'Path to the local source file for Production.'
     required: true
   staging_configmap:
     description: 'Path to the Staging ConfigMap YAML file in the GitOps repository.'
@@ -17,13 +17,13 @@ inputs:
     description: 'Path to the Prod ConfigMap YAML file in the GitOps repository.'
     required: true
   gitops_repo:
-    description: 'GitOps repository in format owner/repo (e.g., Automya/gitops).'
+    description: 'GitOps repository in format owner/repo.'
     required: true
   github_token:
     description: 'Token with write permissions to the GitOps repo.'
     required: true
   source_repo_token:
-    description: 'Token to comment in the source PR (optional, default uses github_token).'
+    description: 'Token to comment in the source PR.'
     required: false
     default: ''
   branch:
@@ -38,72 +38,36 @@ inputs:
     description: 'Commit message.'
     required: false
     default: 'chore: update application.yml config'
-  git_username:
-    description: 'Git user name for commit.'
-    required: false
-    default: 'github-actions[bot]'
-  git_email:
-    description: 'Git email for commit.'
-    required: false
-    default: 'github-actions[bot]@users.noreply.github.com'
 
 runs:
   using: composite
   steps:
-    - name: Initialize action context
+    - name: Initialize
       shell: bash
       run: |
-        set -euo pipefail
-        : > "$GITHUB_WORKSPACE/action_error.txt"
         if [ -n "${{ inputs.source_repo_token }}" ]; then
           echo "COMMENT_TOKEN=${{ inputs.source_repo_token }}" >> $GITHUB_ENV
         else
           echo "COMMENT_TOKEN=${{ inputs.github_token }}" >> $GITHUB_ENV
         fi
-        echo "SKIP=false" >> $GITHUB_ENV
 
-    - name: Parse sync command from PR comment
+    - name: Parse Sync Command
+      id: parse
+      uses: ./actions/parse-comment
+      with:
+        comment_body: ${{ github.event.comment.body }}
+        command_prefix: "sync"
+
+    - name: Validate & Setup Context
+      if: steps.parse.outputs.is_valid == 'true'
       shell: bash
+      env:
+        SYNC_BRANCH: ${{ steps.parse.outputs.branch }}
+        ENV_RAW: ${{ steps.parse.outputs.env }}
       run: |
-        set -euo pipefail
-        BODY="${{ github.event.comment.body || '' }}"
-        
-        echo "Debug: Event Name: ${{ github.event_name }}"
-        echo "Debug: Issue Number: ${{ github.event.issue.number }}"
-        echo "Debug: PR Number: ${{ github.event.pull_request.number }}"
-        
-        echo "Comentario recibido:"
-        echo "$BODY"
-        
-        if echo "$BODY" | grep -qE '^:white_check_mark:|^:x:|^Configuración sincronizada|^No se pudo sincronizar'; then
-          echo "El comentario parece ser una respuesta automática. Se ignora."
-          echo "SKIP=true" >> $GITHUB_ENV
-          exit 0
-        fi
-
-        if [ -z "$BODY" ]; then
-          echo "No hay comentario disponible."
-          echo "SKIP=true" >> $GITHUB_ENV
-          exit 0
-        fi
-
-        BODY_TRIMMED=$(echo "$BODY" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-        
-        # Regex for: sync -b <branch> -e <env>
-        if ! echo "$BODY_TRIMMED" | grep -qiE '^sync[[:space:]]+-b[[:space:]]+[^[:space:]]+[[:space:]]+-e[[:space:]]+(staging|stage|st|stag|stg|prod|production|prd)'; then
-          echo "El comentario no tiene el formato exacto requerido."
-          echo "Formato esperado: 'sync -b <branch> -e <staging|prod>'"
-          echo "SKIP=true" >> $GITHUB_ENV
-          exit 0
-        fi
-
-        SYNC_BRANCH=$(echo "$BODY" | grep -oE '\-b[[:space:]]+([^[:space:]]+)' | sed -E 's/\-b[[:space:]]+//' | head -n1 || echo "")
-        ENV_RAW=$(echo "$BODY" | grep -oE '\-e[[:space:]]+([^[:space:]]+)' | sed -E 's/\-e[[:space:]]+//' | head -n1 || echo "")
-
         if [ -z "$SYNC_BRANCH" ] || [ -z "$ENV_RAW" ]; then
-          echo "No se pudo extraer la rama o el entorno."
-          echo "SKIP=true" >> $GITHUB_ENV
-          exit 0
+           echo "SKIP=true" >> $GITHUB_ENV
+           exit 0
         fi
 
         ENV_LOWER=$(echo "$ENV_RAW" | tr '[:upper:]' '[:lower:]')
@@ -129,44 +93,36 @@ runs:
         echo "TARGET_CONFIGMAP=$TARGET_CONFIGMAP" >> $GITHUB_ENV
         echo "SOURCE_FILE_PATH=$SOURCE_FILE_PATH" >> $GITHUB_ENV
         echo "SKIP=false" >> $GITHUB_ENV
-        
-        echo "Comando detectado:"
-        echo "  Rama origen: $SYNC_BRANCH"
-        echo "  Entorno destino: $TARGET_ENV"
-        echo "  Archivo origen: $SOURCE_FILE_PATH"
-        echo "  ConfigMap destino: $TARGET_CONFIGMAP"
 
-        # Determine the ref to checkout
+        # Determine checkout ref (PR or branch)
         PR_NUMBER="${{ github.event.issue.number }}"
-        if [ -z "$PR_NUMBER" ] || [ "$PR_NUMBER" == "null" ]; then
-          PR_NUMBER="${{ github.event.pull_request.number }}"
-        fi
+        if [ -z "$PR_NUMBER" ]; then PR_NUMBER="${{ github.event.pull_request.number }}"; fi
         
         SOURCE_REPO=""
         CHECKOUT_REF=""
 
         if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "null" ]; then
-           echo "Fetching PR #$PR_NUMBER details..."
            API_URL="https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER"
-           # Use || true to prevent exit on 404 if set -e is on
-           PR_DATA=$(curl -sS -H "Authorization: token ${{ inputs.github_token }}" -H "Accept: application/vnd.github+json" "$API_URL" || echo "{}")
-           
-           # Extract repo full name and ref safely using python
-           # If 'head' is missing (e.g. it's an issue not a PR), these will be empty
-           SOURCE_REPO=$(echo "$PR_DATA" | python3 -c 'import json,sys; data=json.load(sys.stdin); print(data.get("head", {}).get("repo", {}).get("full_name", "") or "")')
-           CHECKOUT_REF=$(echo "$PR_DATA" | python3 -c 'import json,sys; data=json.load(sys.stdin); print(data.get("head", {}).get("ref", "") or "")')
+           PR_DATA=$(curl -sS -H "Authorization: token ${{ inputs.github_token }}" "$API_URL" || echo "{}")
+           SOURCE_REPO=$(echo "$PR_DATA" | jq -r '.head.repo.full_name // empty')
+           CHECKOUT_REF=$(echo "$PR_DATA" | jq -r '.head.ref // empty')
         fi
 
-        if [ -n "$SOURCE_REPO" ] && [ -n "$CHECKOUT_REF" ]; then
+        if [ -n "$SOURCE_REPO" ]; then
            echo "SOURCE_REPO=$SOURCE_REPO" >> $GITHUB_ENV
            echo "CHECKOUT_REF=$CHECKOUT_REF" >> $GITHUB_ENV
-           echo "Detected PR source: $SOURCE_REPO @ $CHECKOUT_REF"
         else
-           echo "Could not determine PR source (or not a PR). Falling back to command branch."
            echo "SOURCE_REPO=${{ github.repository }}" >> $GITHUB_ENV
            echo "CHECKOUT_REF=$SYNC_BRANCH" >> $GITHUB_ENV
-           echo "Using branch ref: $SYNC_BRANCH from current repo"
         fi
+
+    - name: Notify Start
+      if: ${{ env.SKIP == 'false' }}
+      uses: ./actions/notify
+      with:
+        github_token: ${{ env.COMMENT_TOKEN }}
+        pr_number: ${{ github.event.issue.number || github.event.pull_request.number }}
+        pr_message: "🚀 Sincronizando configuración desde rama `${{ env.SYNC_BRANCH }}` hacia `${{ env.TARGET_ENV }}`..."
 
     - name: Checkout Source Repo
       if: ${{ env.SKIP == 'false' }}
@@ -176,33 +132,16 @@ runs:
         ref: ${{ env.CHECKOUT_REF }}
         path: source-repo
 
-    - name: Normalize GitOps repository reference
+    - name: Normalize GitOps Repo
       if: ${{ env.SKIP == 'false' }}
       shell: bash
       run: |
-        set -euo pipefail
         RAW="${{ inputs.gitops_repo }}"
-        if [ -z "$RAW" ]; then
-          echo "gitops_repo cannot be empty"
-          exit 1
-        fi
-        repo="$RAW"
-        repo="${repo#https://github.com/}"
-        repo="${repo#http://github.com/}"
-        repo="${repo#github.com/}"
-        repo="${repo#git@github.com:}"
-        repo="${repo#git@www.github.com:}"
-        repo="${repo#www.github.com/}"
-        repo="${repo#/}"
+        repo="${RAW#https://github.com/}"
         repo="${repo%.git}"
-        if ! echo "$repo" | grep -q '/'; then
-          echo "Could not normalize GitOps repo (expected owner/repo): $RAW"
-          exit 1
-        fi
         echo "GITOPS_REPO=$repo" >> $GITHUB_ENV
-        echo "Normalized GitOps repo: $repo"
 
-    - name: Checkout GitOps repository
+    - name: Checkout GitOps Repo
       if: ${{ env.SKIP == 'false' }}
       uses: actions/checkout@v4
       with:
@@ -211,17 +150,14 @@ runs:
         path: gitops-repo
         ref: ${{ inputs.branch }}
 
-    - name: Ensure yq is available
+    - name: Ensure yq
       if: ${{ env.SKIP == 'false' }}
       shell: bash
       run: |
-        set -euo pipefail
         if ! command -v yq >/dev/null 2>&1; then
-          echo "yq not found, installing..."
           curl -sSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq
           chmod +x /usr/local/bin/yq
         fi
-        yq --version
 
     - name: Update ConfigMap
       if: ${{ env.SKIP == 'false' }}
@@ -232,176 +168,34 @@ runs:
         TARGET_FILE: ${{ env.TARGET_CONFIGMAP }}
         KEY: ${{ inputs.configmap_key }}
       run: |
-        set -euo pipefail
-        ERRFILE="$GITHUB_WORKSPACE/action_error.txt"
-        trap 'rc=$?; echo "ERROR actualizando ConfigMap (exit $rc)" >> "$ERRFILE"; exit $rc' ERR
-        
-        if [ ! -f "$SOURCE_FILE" ]; then
-          echo "Error: Source file '$SOURCE_FILE' not found in branch ${{ env.SYNC_BRANCH }}." | tee -a "$ERRFILE"
-          exit 1
+        set -e
+        if [ ! -f "$SOURCE_FILE" ] || [ ! -f "$TARGET_FILE" ]; then
+           echo "❌ Error: Archivo origen o destino no encontrado."
+           exit 1
         fi
-
-        if [ ! -f "$TARGET_FILE" ]; then
-          echo "Error: Target ConfigMap '$TARGET_FILE' not found in GitOps repo." | tee -a "$ERRFILE"
-          exit 1
-        fi
-
-        echo "Updating key '$KEY' in '$TARGET_FILE' with content from '$SOURCE_FILE'..."
-        
-        # Strip trailing whitespace from source file to ensure yq uses block scalar style
         sed -i 's/[[:space:]]*$//' "$SOURCE_FILE"
-        
-        # Use yq to update the ConfigMap
-        # load_str loads the content of the file as a string
-        # style="literal" enforces the | block scalar style
         yq eval -i ".data[\"$KEY\"] = load_str(\"$SOURCE_FILE\") | .data[\"$KEY\"] style=\"literal\"" "$TARGET_FILE"
-        
-        echo "ConfigMap updated successfully."
-        
-        # Show diff for debugging (optional, but helpful)
-        git diff "$TARGET_FILE"
 
-    - name: Create PR and Auto-Merge
+    - name: Create PR
       if: ${{ env.SKIP == 'false' }}
-      shell: bash
-      working-directory: gitops-repo
-      env:
-        COMMIT_MSG: ${{ inputs.commit_message }}
-        USER_NAME: ${{ inputs.git_username }}
-        USER_EMAIL: ${{ inputs.git_email }}
-        BASE_BRANCH: ${{ inputs.branch }}
-        GITOPS_REPO: ${{ env.GITOPS_REPO }}
-        TOKEN: ${{ inputs.github_token }}
-        RUN_ID: ${{ github.run_id }}
-        TARGET_ENV: ${{ env.TARGET_ENV }}
-      run: |
-        set -euo pipefail
-        ERRFILE="$GITHUB_WORKSPACE/action_error.txt"
-        trap 'rc=$?; echo "ERROR creando PR/push - exit code $rc" >> "$ERRFILE"; exit $rc' ERR
-        
-        if git diff --quiet; then
-          echo "No changes to commit."
-          echo "NO_CHANGES=true" >> $GITHUB_ENV
-          exit 0
-        fi
-
-        # Configure Git
-        git config user.name "$USER_NAME"
-        git config user.email "$USER_EMAIL"
-        
-        # Create a new branch
-        NEW_BRANCH="config-sync/${TARGET_ENV}-${RUN_ID}-${RANDOM}"
-        git checkout -b "$NEW_BRANCH"
-        
-        # Commit changes
-        git add .
-        git commit -m "$COMMIT_MSG (${TARGET_ENV})"
-        
-        # Push the new branch
-        echo "Pushing branch $NEW_BRANCH..."
-        git push "https://x-access-token:${TOKEN}@github.com/${GITOPS_REPO}.git" "$NEW_BRANCH"
-
-        # Create Pull Request
-        echo "Creating Pull Request..."
-        PR_TITLE="$COMMIT_MSG (${TARGET_ENV})"
-        PR_BODY="Automatic update of config from workflow run $RUN_ID"
-        
-        api_url="https://api.github.com/repos/${GITOPS_REPO}/pulls"
-        payload=$(printf '{"title":"%s","head":"%s","base":"%s","body":"%s"}' \
-          "$PR_TITLE" "$NEW_BRANCH" "$BASE_BRANCH" "$PR_BODY")
-
-        pr_response=$(curl -sS -X POST -H "Authorization: token ${TOKEN}" \
-          -H "Accept: application/vnd.github+json" "$api_url" -d "$payload")
-        
-        pr_number=$(echo "$pr_response" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("number", ""))')
-        pr_url=$(echo "$pr_response" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("html_url", ""))')
-
-        if [ -z "$pr_number" ]; then
-          echo "Failed to create PR. Response:"
-          echo "$pr_response" | tee -a "$ERRFILE"
-          exit 1
-        fi
-
-        echo "GITOPS_PR_URL=$pr_url" >> $GITHUB_ENV
-        echo "PR created: $pr_url (Number: $pr_number)"
-
-        # Auto-merge the PR
-        echo "Attempting to auto-merge PR #$pr_number..."
-        merge_url="https://api.github.com/repos/${GITOPS_REPO}/pulls/${pr_number}/merge"
-        merge_payload='{"commit_title":"'"${PR_TITLE}"'","merge_method":"merge"}'
-        
-        merge_response=$(curl -sS -X PUT -H "Authorization: token ${TOKEN}" \
-          -H "Accept: application/vnd.github+json" "$merge_url" -d "$merge_payload")
-
-        merged=$(echo "$merge_response" | python3 -c 'import json,sys; print(str(json.load(sys.stdin).get("merged", False)).lower())' 2>/dev/null || echo "false")
-
-        if [ "$merged" = "true" ]; then
-          echo "PR merged successfully."
-          
-          # Delete the branch
-          echo "Deleting branch $NEW_BRANCH..."
-          delete_branch_url="https://api.github.com/repos/${GITOPS_REPO}/git/refs/heads/${NEW_BRANCH}"
-          curl -sS -X DELETE -H "Authorization: token ${TOKEN}" \
-            -H "Accept: application/vnd.github+json" "$delete_branch_url"
-          echo "Branch deleted."
-        else
-          echo "Failed to auto-merge PR."
-          echo "Response: $merge_response" | tee -a "$ERRFILE"
-          exit 1
-        fi
-
-    - name: Report result back to source PR
-      if: always() && env.SKIP == 'false'
-      uses: actions/github-script@v7
-      env:
-        COMMENT_TOKEN: ${{ env.COMMENT_TOKEN }}
-        ERRFILE: ${{ github.workspace }}/action_error.txt
-        GITOPS_PR_URL: ${{ env.GITOPS_PR_URL }}
-        SYNC_BRANCH: ${{ env.SYNC_BRANCH }}
-        TARGET_ENV: ${{ env.TARGET_ENV }}
-        NO_CHANGES: ${{ env.NO_CHANGES }}
+      id: create-pr
+      uses: ./actions/create-pr
       with:
-        github-token: ${{ env.COMMENT_TOKEN }}
-        script: |
-          const fs = require('fs');
-          const commentBody = context.payload.comment?.body || '';
-          
-          if (/^:white_check_mark:|^:x:|^Configuración sincronizada|^No se pudo sincronizar/i.test(commentBody)) {
-            core.info('El comentario parece ser una respuesta automática. No se publicará respuesta para evitar loops.');
-            return;
-          }
-          
-          const errFile = process.env.ERRFILE;
-          const hasError = fs.existsSync(errFile) && fs.readFileSync(errFile, 'utf8').trim().length > 0;
-          const prUrl = process.env.GITOPS_PR_URL || '';
-          const syncBranch = process.env.SYNC_BRANCH || '(rama no disponible)';
-          const targetEnv = process.env.TARGET_ENV || '(entorno no disponible)';
-          let body = '';
-          
-          if (hasError) {
-            body = ':x: La sincronización de la rama "' + syncBranch + '" hacia "' + targetEnv + '" falló.\n\n```\n' +
-              fs.readFileSync(errFile, 'utf8') + '\n```\n';
-            if (prUrl) body += 'Se alcanzó a crear la PR en GitOps: ' + prUrl + '\n';
-          } else if (process.env.NO_CHANGES === 'true') {
-            body = ':white_check_mark: Configuración de la rama "' + syncBranch + '" ya estaba sincronizada en "' + targetEnv + '". No se realizaron cambios.\n';
-          } else if (prUrl) {
-            body = ':white_check_mark: Configuración de la rama "' + syncBranch + '" sincronizada en "' + targetEnv + '".\n' +
-              'PR en GitOps: ' + prUrl + '\n';
-          } else {
-            body = ':white_check_mark: Configuración sincronizada exitosamente.\n';
-          }
+        token: ${{ inputs.github_token }}
+        repo: ${{ env.GITOPS_REPO }}
+        base_branch: ${{ inputs.branch }}
+        head_branch: "config-sync/${{ env.TARGET_ENV }}-${{ github.run_id }}"
+        commit_message: "${{ inputs.commit_message }} (${{ env.TARGET_ENV }})"
+        pr_title: "${{ inputs.commit_message }} (${{ env.TARGET_ENV }})"
+        pr_body: "Automatic update of config from workflow run ${{ github.run_id }}"
+        working_directory: "gitops-repo"
 
-          const issueNumber = context.issue?.number ||
-            context.payload?.issue?.number ||
-            context.payload?.pull_request?.number;
-          if (!issueNumber) {
-            core.info('No se encontró número de PR/issue para comentar.');
-            return;
-          }
-
-          await github.rest.issues.createComment({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            issue_number: issueNumber,
-            body
-          });
+    - name: Report Result
+      if: always() && env.SKIP == 'false'
+      uses: ./actions/notify
+      with:
+        github_token: ${{ env.COMMENT_TOKEN }}
+        pr_number: ${{ github.event.issue.number || github.event.pull_request.number }}
+        pr_message: |
+          ${{ steps.create-pr.outputs.pr_url != '' && ':white_check_mark: Configuración sincronizada exitosamente.\nPR en GitOps: ' || '' }}${{ steps.create-pr.outputs.pr_url }}
+          ${{ steps.create-pr.outputs.pr_url == '' && ':x: Falló la creación de la PR.' || '' }}
