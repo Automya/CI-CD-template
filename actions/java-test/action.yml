@@ -14,7 +14,7 @@ runs:
   using: "composite"
   steps:
     - name: Setup Java
-      uses: ./actions/setup-java-gradle
+      uses: ./internal/setup-java-gradle
       with:
         java-version: ${{ inputs.java-version }}
 

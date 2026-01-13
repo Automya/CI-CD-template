@@ -53,14 +53,14 @@ runs:
 
     - name: Parse Sync Command
       id: parse
-      uses: ./actions/parse-comment
+      uses: ./internal/parse-comment
       with:
         comment_body: ${{ github.event.comment.body }}
         command_prefix: "sync"
 
     - name: Determine Context
       id: ctx
-      uses: ./actions/sync-context-determine
+      uses: ./internal/sync-context-determine
       with:
         staging_source: ${{ inputs.staging_source_file }}
         prod_source: ${{ inputs.prod_source_file }}
@@ -73,7 +73,7 @@ runs:
 
     - name: Notify Start
       if: ${{ steps.ctx.outputs.skip == 'false' }}
-      uses: ./actions/notify
+      uses: ./internal/notify
       with:
         github_token: ${{ env.COMMENT_TOKEN }}
         pr_number: ${{ github.event.issue.number || github.event.pull_request.number }}
@@ -90,7 +90,7 @@ runs:
     - name: Normalize GitOps Repo
       if: ${{ steps.ctx.outputs.skip == 'false' }}
       id: norm
-      uses: ./actions/util-normalize-repo
+      uses: ./internal/util-normalize-repo
       with:
         repo_input: ${{ inputs.gitops_repo }}
 
@@ -132,7 +132,7 @@ runs:
     - name: Create PR
       if: ${{ steps.ctx.outputs.skip == 'false' }}
       id: create-pr
-      uses: ./actions/create-pr
+      uses: ./internal/create-pr
       with:
         token: ${{ inputs.github_token }}
         repo: ${{ steps.norm.outputs.repo_normalized }}
@@ -145,7 +145,7 @@ runs:
 
     - name: Report Result
       if: always() && steps.ctx.outputs.skip == 'false'
-      uses: ./actions/notify
+      uses: ./internal/notify
       with:
         github_token: ${{ env.COMMENT_TOKEN }}
         pr_number: ${{ github.event.issue.number || github.event.pull_request.number }}

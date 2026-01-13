@@ -90,7 +90,7 @@ runs:
     - name: Create PR
       id: create-pr
       if: steps.update.outputs.needs_restart != 'true'
-      uses: ./actions/create-pr
+      uses: ./internal/create-pr
       with:
         token: ${{ inputs.gitops_token }}
         repo: ${{ inputs.gitops_repo }}

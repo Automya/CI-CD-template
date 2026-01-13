@@ -22,7 +22,7 @@ runs:
   steps:
     - name: Notify Start
       if: github.event_name == 'issue_comment'
-      uses: ./actions/notify
+      uses: ./internal/notify
       with:
         github_token: ${{ env.GH_TOKEN }}
         pr_number: ${{ github.event.issue.number }}
@@ -38,14 +38,14 @@ runs:
     - name: Parse Comment
       if: github.event_name == 'issue_comment'
       id: parse
-      uses: ./actions/parse-comment
+      uses: ./internal/parse-comment
       with:
         comment_body: ${{ github.event.comment.body }}
         command_prefix: "build"
 
     - name: Determine Context
       id: ctx
-      uses: ./actions/build-context-determine
+      uses: ./internal/build-context-determine
       with:
         event_name: ${{ github.event_name }}
         is_valid_command: ${{ steps.parse.outputs.is_valid }}
@@ -61,20 +61,20 @@ runs:
 
     - name: Setup GCP & Docker
       if: steps.ctx.outputs.status == ''
-      uses: ./actions/setup-gcp
+      uses: ./internal/setup-gcp
       with:
         region: ${{ env.GCP_REGION }}
 
     - name: Build and Push
       if: steps.ctx.outputs.status == ''
       id: build
-      uses: ./actions/docker-build-push
+      uses: ./internal/docker-build-push
       with:
         image_full_name: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ steps.ctx.outputs.tag }}
 
     - name: GitOps Update (Release only)
       if: github.event_name == 'release' && steps.build.outputs.status == 'success'
-      uses: ./actions/gitops-pr
+      uses: ./internal/gitops-pr
       with:
         gitops_repo: ${{ inputs.gitops_repo }}
         gitops_token: ${{ inputs.gitops_token }}
@@ -86,7 +86,7 @@ runs:
     - name: Prepare Report
       if: github.event_name == 'issue_comment'
       id: report
-      uses: ./actions/build-report-message
+      uses: ./internal/build-report-message
       with:
         status: ${{ steps.ctx.outputs.status || steps.build.outputs.status }}
         job_url: ${{ steps.ctx.outputs.job_url }}
@@ -94,7 +94,7 @@ runs:
 
     - name: Notify Result
       if: github.event_name == 'issue_comment'
-      uses: ./actions/notify
+      uses: ./internal/notify
       with:
         github_token: ${{ env.GH_TOKEN }}
         pr_number: ${{ github.event.issue.number }}

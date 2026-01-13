@@ -60,21 +60,21 @@ runs:
   using: composite
   steps:
     - name: Initialize Context
-      uses: ./actions/deploy-context-init
+      uses: ./internal/deploy-context-init
       with:
         source_repo_token: ${{ inputs.source_repo_token }}
         github_token: ${{ inputs.github_token }}
 
     - name: Parse Deploy Command
       id: parse
-      uses: ./actions/parse-comment
+      uses: ./internal/parse-comment
       with:
         comment_body: ${{ github.event.comment.body }}
         command_prefix: "deploy"
 
     - name: Validate & Prepare Context
       id: ctx
-      uses: ./actions/deploy-validate-context
+      uses: ./internal/deploy-validate-context
       with:
         tag: ${{ steps.parse.outputs.tag }}
         env_raw: ${{ steps.parse.outputs.env }}
@@ -83,7 +83,7 @@ runs:
 
     - name: Notify Start Deployment
       if: ${{ steps.ctx.outputs.skip == 'false' && steps.ctx.outputs.stop_execution == 'false' }}
-      uses: ./actions/notify
+      uses: ./internal/notify
       with:
         github_token: ${{ env.COMMENT_TOKEN }}
         pr_number: ${{ github.event.issue.number || github.event.pull_request.number }}
@@ -100,14 +100,14 @@ runs:
     - name: Normalize GitOps repository
       if: ${{ steps.ctx.outputs.skip == 'false' && steps.ctx.outputs.stop_execution == 'false' }}
       id: norm
-      uses: ./actions/util-normalize-repo
+      uses: ./internal/util-normalize-repo
       with:
         repo_input: ${{ inputs.gitops_repo }}
 
     - name: Select Manifest Path
       if: ${{ steps.ctx.outputs.skip == 'false' && steps.ctx.outputs.stop_execution == 'false' }}
       id: manifest
-      uses: ./actions/deploy-select-manifest
+      uses: ./internal/deploy-select-manifest
       with:
         target_env: ${{ steps.ctx.outputs.target_env }}
         staging_path: ${{ inputs.staging_manifest_path }}
@@ -116,7 +116,7 @@ runs:
     - name: GitOps Update & PR
       if: ${{ steps.ctx.outputs.skip == 'false' && steps.ctx.outputs.stop_execution == 'false' }}
       id: gitops
-      uses: ./actions/gitops-pr
+      uses: ./internal/gitops-pr
       with:
         gitops_repo: ${{ steps.norm.outputs.repo_normalized }}
         gitops_token: ${{ inputs.github_token }}
@@ -145,7 +145,7 @@ runs:
     - name: Restart Deployment
       if: ${{ steps.ctx.outputs.skip == 'false' && steps.ctx.outputs.stop_execution == 'false' && steps.gitops.outputs.needs_restart == 'true' }}
       id: restart
-      uses: ./actions/k8s-rollout-restart
+      uses: ./internal/k8s-rollout-restart
       with:
         deployment_name: ${{ inputs.deployment_name || inputs.image_name }}
         namespace: ${{ inputs.namespace }}
@@ -153,7 +153,7 @@ runs:
     - name: Generate Report Message
       id: report
       if: always() && steps.ctx.outputs.skip == 'false'
-      uses: ./actions/deploy-report
+      uses: ./internal/deploy-report
       with:
         job_status: ${{ job.status }}
         gitops_pr_url: ${{ steps.gitops.outputs.pr_url }}
@@ -165,7 +165,7 @@ runs:
 
     - name: Notify Final Result
       if: always() && steps.ctx.outputs.skip == 'false'
-      uses: ./actions/notify
+      uses: ./internal/notify
       with:
         github_token: ${{ env.COMMENT_TOKEN }}
         pr_number: ${{ github.event.issue.number || github.event.pull_request.number }}
