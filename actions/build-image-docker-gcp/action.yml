@@ -20,74 +20,29 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: begin notification
+    - name: Notify Start
       if: github.event_name == 'issue_comment'
-      shell: bash
-      env:
-        WEBHOOK_URL: ${{ inputs.google_chat_webhook }}
-        PR_NUMBER: ${{ github.event.issue.number }}
-        REPO: ${{ github.repository }}
-        GH_TOKEN: ${{ env.GH_TOKEN }}
-        RUN_ID: ${{ github.run_id }}
-      run: |
-        # Definir función para comentar en PR
-        comment() {
-          MSG="$1"
-          curl -s -H "Authorization: token $GH_TOKEN" \
-            -X POST \
-            -d "{\"body\":\"$MSG\"}" \
-            "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/comments" > /dev/null
-        }
-
-        # Mensaje base
-        MSG_BASE="🚀 Iniciando Build, espere por favor..."
-        comment "$MSG_BASE"
-
-        # Notificar a Google Chat si existe webhook
-        if [ -n "$WEBHOOK_URL" ]; then
-          # Construir mensaje enriquecido para Chat
-          LINK="${GITHUB_SERVER_URL}/${REPO}/actions/runs/${RUN_ID}"
-          CHAT_MSG="🚀 **Iniciando Build**
-          - **Repo:** $REPO
-          - **PR:** #$PR_NUMBER
-          - [Ver Logs]($LINK)
-          ⏳ Iniciando..."
-
-          echo "Enviando notificación a Google Chat..."
-          jq -n --arg text "$CHAT_MSG" '{text: $text}' > start_notification.json
-          
-          curl -s -H "Content-Type: application/json" \
-               -d @start_notification.json \
-               "$WEBHOOK_URL" || echo "Advertencia: Falló la notificación a Google Chat."
-        fi
+      uses: ./actions/notify
+      with:
+        github_token: ${{ env.GH_TOKEN }}
+        pr_number: ${{ github.event.issue.number }}
+        webhook_url: ${{ inputs.google_chat_webhook }}
+        pr_message: "🚀 Iniciando Build, espere por favor..."
+        chat_message: |
+          🚀 **Iniciando Build**
+          - **Repo:** ${{ github.repository }}
+          - **PR:** #${{ github.event.issue.number }}
+          - [Ver Logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          ⏳ Iniciando...
 
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Clean GCP credential env vars
-      shell: bash
-      run: |
-        unset GOOGLE_APPLICATION_CREDENTIALS
-        unset CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE
-        unset GOOGLE_GHA_CREDS_PATH
-        unset GCP_SA_KEY
-        export GOOGLE_APPLICATION_CREDENTIALS=""
-        export CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE=""
-        export GOOGLE_GHA_CREDS_PATH=""
-        export GCP_SA_KEY=""
-
-    - name: Install gcloud SDK
-      uses: google-github-actions/setup-gcloud@v2
-      env:
-        GOOGLE_APPLICATION_CREDENTIALS: ""
-        CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE: ""
-        GOOGLE_GHA_CREDS_PATH: ""
-        GCP_SA_KEY: ""
-
-    - name: Configure Docker for GCP
-      shell: bash
-      run: |
-        gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+    - name: Setup GCP & Docker
+      uses: ./actions/setup-gcp
+      with:
+        region: ${{ env.GCP_REGION }}
+        # Defaults for provider and service_account match the original hardcoded values
 
     - name: Determine build context
       id: context
@@ -136,7 +91,7 @@ runs:
           fi
 
           # Chequeo de errores lógicos
-          if [[ "$BRANCH" == "main" && -n "$TAG" && "$TAG" != "MAIN" ]]; then
+          if [[ "$BRANCH" == "main" && -n "$TAG" && "$TAG" != "main" ]]; then
             if ! is_semver "$TAG"; then
               LOGICAL_STATUS="invalid_tag_main"
             fi
@@ -164,16 +119,14 @@ runs:
         echo "job_url=$JOB_URL" >> "$GITHUB_OUTPUT"
         echo "status=$LOGICAL_STATUS" >> "$GITHUB_OUTPUT"
 
-    - name: Checkout code
+    - name: Checkout branch
+      if: steps.context.outputs.branch != ''
       uses: actions/checkout@v4
       with:
         ref: ${{ steps.context.outputs.branch }}
-    - name: Authenticate to GCP using Workload Identity Federation
-      uses: google-github-actions/auth@v1
-      with:
-        create_credentials_file: true
-        workload_identity_provider: "projects/244039780319/locations/global/workloadIdentityPools/github-actions-pool/providers/github-provider-automya"
-        service_account: "github-ci-sa@automya.iam.gserviceaccount.com"
+    
+    # Auth steps removed (handled by setup-gcp)
+
     - name: Build and push image
       if: steps.context.outputs.tag != ''
       id: build
@@ -190,10 +143,6 @@ runs:
 
         set +e  # Desactiva 'exit on error'
         docker build \
-          --build-arg MAVEN_USERNAME="${MAVEN_USERNAME}" \
-          --build-arg MAVEN_PASSWORD="${MAVEN_PASSWORD}" \
-          --build-arg MAVEN_USERNAME2="${MAVEN_USERNAME2}" \
-          --build-arg MAVEN_PASSWORD2="${MAVEN_PASSWORD2}" \
           -t "$FULL_IMAGE" .
         BUILD_STATUS=$?
 
@@ -256,7 +205,6 @@ runs:
         fi
 
         # Actualizar imagen con yq
-        # Buscamos el contenedor por nombre y actualizamos su imagen preservando el nombre de la imagen base
         yq eval -i "(.spec.template.spec.containers[] | select(.name == \"$CONTAINER_NAME\").image) |= sub(\":.*$\", \":$TAG\")" "$FILE"
 
         if git diff --quiet -- "$FILE"; then
@@ -302,62 +250,64 @@ runs:
           
         echo "🚀 Despliegue a producción iniciado (PR mergeada)."
 
-    - name: Comment build result on PR
+    - name: Prepare Notification Message
       if: github.event_name == 'issue_comment'
+      id: msg
       shell: bash
+      env:
+        STATUS: ${{ steps.build.outputs.status }}
+        JOB_URL: ${{ steps.context.outputs.job_url }}
+        TAG: ${{ steps.context.outputs.tag }}
+        IMAGE: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ steps.context.outputs.tag }}
       run: |
-        PR_NUMBER=$(jq -r '.issue.number // empty' < "$GITHUB_EVENT_PATH")
-        JOB_URL="${{ steps.context.outputs.job_url }}"
-        STATUS="${{ steps.build.outputs.status }}"
-        TAG="${{ steps.context.outputs.tag }}"
-        IMAGE="$GCP_REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$IMAGE_NAME:$TAG"
-        WEBHOOK_URL="${{ inputs.google_chat_webhook }}"
-
-        comment() {
-          MSG="$1"
-          curl -s -H "Authorization: token $GH_TOKEN" \
-            -X POST \
-            -d "{\"body\":\"$MSG\"}" \
-            "https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" > /dev/null
-        }
-
-        notify_chat() {
-           CHAT_BODY="$1"
-           if [ -n "$WEBHOOK_URL" ]; then
-              jq -n --arg text "$CHAT_BODY" '{text: $text}' > chat_notification.json
-              curl -s -H "Content-Type: application/json" -d @chat_notification.json "$WEBHOOK_URL" || true
-           fi
-        }
-
+        PR_MSG=""
+        CHAT_MSG=""
+        
         case "$STATUS" in
           "not_build_command")
-            comment "❌ Error: El comando del comentario debe empezar con 'build'."
+            PR_MSG="❌ Error: El comando del comentario debe empezar con 'build'."
             ;;
           "invalid_tag_main")
-            comment "❌ Error: Solo se permiten tags semánticos (v1.2.3) en main. [Ver logs del job]($JOB_URL)"
+            PR_MSG="❌ Error: Solo se permiten tags semánticos (v1.2.3) en main. [Ver logs del job]($JOB_URL)"
             ;;
           "invalid_tag_branch")
-            comment "❌ Error: Tags semánticos solo están permitidos en main. [Ver logs del job]($JOB_URL)"
+            PR_MSG="❌ Error: Tags semánticos solo están permitidos en main. [Ver logs del job]($JOB_URL)"
             ;;
           "invalid_release_branch")
-            comment "❌ Error: Release con tag no apunta a main. [Ver logs del job]($JOB_URL)"
+            PR_MSG="❌ Error: Release con tag no apunta a main. [Ver logs del job]($JOB_URL)"
             ;;
           "not_supported_event")
-            comment "❌ Error: Tipo de evento no soportado."
+            PR_MSG="❌ Error: Tipo de evento no soportado."
             ;;
           "build_failed")
-            MSG="❌ Error: Falló la construcción de la imagen ${IMAGE}. [Ver logs del job]($JOB_URL)"
-            comment "$MSG"
-            notify_chat "❌ **Build Fallido**\n- **Imagen:** \`$IMAGE\`\n- [Ver Logs]($JOB_URL)"
+            PR_MSG="❌ Error: Falló la construcción de la imagen ${IMAGE}. [Ver logs del job]($JOB_URL)"
+            CHAT_MSG="❌ **Build Fallido**\n- **Imagen:** \`$IMAGE\`\n- [Ver Logs]($JOB_URL)"
             ;;
           "push_failed")
-            MSG="❌ Error: Falló el push de la imagen ${IMAGE}. [Ver logs del job]($JOB_URL)"
-            comment "$MSG"
-            notify_chat "❌ **Push Fallido**\n- **Imagen:** \`$IMAGE\`\n- [Ver Logs]($JOB_URL)"
+            PR_MSG="❌ Error: Falló el push de la imagen ${IMAGE}. [Ver logs del job]($JOB_URL)"
+            CHAT_MSG="❌ **Push Fallido**\n- **Imagen:** \`$IMAGE\`\n- [Ver Logs]($JOB_URL)"
             ;;
           "success")
-            MSG="🎉 Éxito: Imagen ${IMAGE} subida correctamente. [Ver ejecución completa]($JOB_URL)"
-            comment "$MSG"
-            notify_chat "✅ **Build Exitoso**\n- **Imagen:** \`$IMAGE\`\n- [Ver Logs]($JOB_URL)"
+            PR_MSG="🎉 Éxito: Imagen ${IMAGE} subida correctamente. [Ver ejecución completa]($JOB_URL)"
+            CHAT_MSG="✅ **Build Exitoso**\n- **Imagen:** \`$IMAGE\`\n- [Ver Logs]($JOB_URL)"
             ;;
         esac
+
+        # Output multiline strings
+        echo "pr_msg<<EOF" >> "$GITHUB_OUTPUT"
+        echo "$PR_MSG" >> "$GITHUB_OUTPUT"
+        echo "EOF" >> "$GITHUB_OUTPUT"
+
+        echo "chat_msg<<EOF" >> "$GITHUB_OUTPUT"
+        echo "$CHAT_MSG" >> "$GITHUB_OUTPUT"
+        echo "EOF" >> "$GITHUB_OUTPUT"
+
+    - name: Notify Result
+      if: github.event_name == 'issue_comment'
+      uses: ./actions/notify
+      with:
+        github_token: ${{ env.GH_TOKEN }}
+        pr_number: ${{ github.event.issue.number }}
+        webhook_url: ${{ inputs.google_chat_webhook }}
+        pr_message: ${{ steps.msg.outputs.pr_msg }}
+        chat_message: ${{ steps.msg.outputs.chat_msg }}
