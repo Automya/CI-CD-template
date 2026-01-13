@@ -1,0 +1,95 @@
+name: "Validate Deploy Context"
+description: "Validates deploy arguments and sets environment variables"
+inputs:
+  tag:
+    description: "Parsed tag"
+    required: false
+  env_raw:
+    description: "Parsed environment string"
+    required: false
+  is_valid_command:
+    description: "Whether the command syntax was valid"
+    required: true
+  error_msg:
+    description: "Error message from parser"
+    required: false
+
+outputs:
+  deploy_tag:
+    description: "The valid deploy tag"
+    value: ${{ steps.validate.outputs.deploy_tag }}
+  target_env:
+    description: "The normalized target environment"
+    value: ${{ steps.validate.outputs.target_env }}
+  stop_execution:
+    description: "True if execution should stop (e.g. prod blocked)"
+    value: ${{ steps.validate.outputs.stop_execution }}
+  skip:
+    description: "True if workflow should skip"
+    value: ${{ steps.validate.outputs.skip }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Validate
+      id: validate
+      shell: bash
+      env:
+        TAG: ${{ inputs.tag }}
+        ENV_RAW: ${{ inputs.env_raw }}
+        IS_VALID: ${{ inputs.is_valid_command }}
+        ERR_MSG: ${{ inputs.error_msg }}
+      run: |
+        # Default outputs
+        echo "stop_execution=false" >> "$GITHUB_OUTPUT"
+        echo "skip=false" >> "$GITHUB_OUTPUT"
+
+        # 1. Check if command was valid
+        if [ "$IS_VALID" == "false" ]; then
+          if [ "$ERR_MSG" == "ignored_bot_response" ] || [ "$ERR_MSG" == "wrong_prefix" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "SKIP=true" >> "$GITHUB_ENV"
+            exit 0
+          else
+            echo "Error de sintaxis: El comando no cumple el formato requerido." > "$GITHUB_WORKSPACE/action_error.txt"
+            echo "Uso correcto: \`deploy -t <tag> -e <staging|prod>\`" >> "$GITHUB_WORKSPACE/action_error.txt"
+            exit 1
+          fi
+        fi
+
+        # 2. Check variables
+        if [ -z "$TAG" ] || [ -z "$ENV_RAW" ]; then
+          echo "Error interno extrayendo variables." > "$GITHUB_WORKSPACE/action_error.txt"
+          exit 1
+        fi
+
+        # 3. Validate Env
+        ENV_LOWER=$(echo "$ENV_RAW" | tr '[:upper:]' '[:lower:]')
+        TARGET_ENV=""
+        
+        case "$ENV_LOWER" in
+          staging|stage|st|stag|stg)
+            TARGET_ENV="staging"
+            ;;
+          prod|production|prd)
+            echo "❌ Despliegue a producción bloqueado."
+            echo "Error: Despliegue a producción via comando no permitido. Solo se permite via Release." > "$GITHUB_WORKSPACE/action_error.txt"
+            echo "stop_execution=true" >> "$GITHUB_OUTPUT"
+            echo "STOP_EXECUTION=true" >> "$GITHUB_ENV"
+            ;;
+          *)
+            echo "❌ Entorno desconocido: $ENV_RAW"
+            echo "Error: El entorno '$ENV_RAW' no es válido." > "$GITHUB_WORKSPACE/action_error.txt"
+            echo "Entornos permitidos: staging (o alias: stg)." >> "$GITHUB_WORKSPACE/action_error.txt"
+            exit 1
+            ;;
+        esac
+
+        echo "deploy_tag=$TAG" >> "$GITHUB_OUTPUT"
+        echo "target_env=$TARGET_ENV" >> "$GITHUB_OUTPUT"
+        
+        # Export env vars for subsequent steps if needed, though outputs are preferred
+        echo "DEPLOY_TAG=$TAG" >> "$GITHUB_ENV"
+        echo "TARGET_ENV=$TARGET_ENV" >> "$GITHUB_ENV"
+        echo "STOP_EXECUTION=false" >> "$GITHUB_ENV"
+

@@ -1,0 +1,85 @@
+name: "Generate Deploy Report"
+description: "Generates a markdown status report for a deployment"
+inputs:
+  job_status:
+    description: "GitHub Job Status"
+    required: true
+  gitops_pr_url:
+    description: "URL of the created PR (if any)"
+    required: false
+  deploy_tag:
+    description: "The deployed tag"
+    required: false
+  target_env:
+    description: "Target environment"
+    required: false
+  needs_restart:
+    description: "Whether a restart was triggered"
+    required: false
+  restart_success:
+    description: "Whether the restart was successful"
+    required: false
+  error_file_path:
+    description: "Path to error file"
+    required: false
+    default: "action_error.txt"
+
+outputs:
+  message:
+    description: "The generated markdown message"
+    value: ${{ steps.report.outputs.message }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Generate Report
+      id: report
+      uses: actions/github-script@v7
+      env:
+        JOB_STATUS: ${{ inputs.job_status }}
+        GITOPS_PR_URL: ${{ inputs.gitops_pr_url }}
+        DEPLOY_TAG: ${{ inputs.deploy_tag }}
+        TARGET_ENV: ${{ inputs.target_env }}
+        NEEDS_RESTART: ${{ inputs.needs_restart }}
+        RESTART_SUCCESS: ${{ inputs.restart_success }}
+        ERRFILE: ${{ inputs.error_file_path }}
+      with:
+        script: |
+          const fs = require('fs');
+          
+          const errFile = process.env.ERRFILE;
+          let hasError = false;
+          try {
+             if (fs.existsSync(errFile) && fs.readFileSync(errFile, 'utf8').trim().length > 0) {
+                hasError = true;
+             }
+          } catch (e) {}
+
+          const prUrl = process.env.GITOPS_PR_URL || '';
+          const deployTag = process.env.DEPLOY_TAG || '(tag no disponible)';
+          const targetEnv = process.env.TARGET_ENV || '(entorno no disponible)';
+          const jobStatus = process.env.JOB_STATUS;
+
+          let body = '';
+          if (hasError) {
+            body = '❌ El despliegue del tag "' + deployTag + '" hacia "' + targetEnv + '" falló.\n\n```\n' +
+              fs.readFileSync(errFile, 'utf8') + '\n```\n';
+            if (prUrl) body += 'Se alcanzó a crear la PR en GitOps: ' + prUrl + '\n';
+          } else if (jobStatus === 'failure' || jobStatus === 'cancelled') {
+            body = '❌ **Error Crítico:** Workflow fallido.';
+          } else if (prUrl) {
+            body = '✅ Tag "' + deployTag + '" desplegado en "' + targetEnv + '".\n' +
+              'PR en GitOps: ' + prUrl + '\n';
+          } else if (process.env.NEEDS_RESTART === 'true') {
+             if (process.env.RESTART_SUCCESS === 'true') {
+                body = '✅ Tag "' + deployTag + '" ya existía en "' + targetEnv + '".\n' +
+                       'Se ha reiniciado el deployment exitosamente.';
+             } else {
+                body = '❌ Tag "' + deployTag + '" ya existía, pero falló el reinicio.';
+             }
+          } else {
+            body = '✅Tag "' + deployTag + '" ya estaba aplicado en "' + targetEnv + '".\n';
+          }
+
+          core.setOutput('message', body);
+

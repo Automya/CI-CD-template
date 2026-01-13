@@ -59,17 +59,11 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Initialize action context
-      shell: bash
-      run: |
-        set -euo pipefail
-        : > "$GITHUB_WORKSPACE/action_error.txt"
-        if [ -n "${{ inputs.source_repo_token }}" ]; then
-          echo "COMMENT_TOKEN=${{ inputs.source_repo_token }}" >> $GITHUB_ENV
-        else
-          echo "COMMENT_TOKEN=${{ inputs.github_token }}" >> $GITHUB_ENV
-        fi
-        echo "SKIP=false" >> $GITHUB_ENV
+    - name: Initialize Context
+      uses: ./actions/deploy-context-init
+      with:
+        source_repo_token: ${{ inputs.source_repo_token }}
+        github_token: ${{ inputs.github_token }}
 
     - name: Parse Deploy Command
       id: parse
@@ -78,123 +72,62 @@ runs:
         comment_body: ${{ github.event.comment.body }}
         command_prefix: "deploy"
 
-    - name: Validate Context
-      if: steps.parse.outputs.is_valid == 'true'
-      shell: bash
-      env:
-        TAG: ${{ steps.parse.outputs.tag }}
-        ENV_RAW: ${{ steps.parse.outputs.env }}
-      run: |
-        if [ -z "$TAG" ] || [ -z "$ENV_RAW" ]; then
-          echo "Error interno extrayendo variables." > "$GITHUB_WORKSPACE/action_error.txt"
-          exit 1
-        fi
-
-        ENV_LOWER=$(echo "$ENV_RAW" | tr '[:upper:]' '[:lower:]')
-        case "$ENV_LOWER" in
-          staging|stage|st|stag|stg)
-            TARGET_ENV="staging"
-            ;;
-          prod|production|prd)
-            echo "❌ Despliegue a producción bloqueado."
-            echo "Error: Despliegue a producción via comando no permitido. Solo se permite via Release." > "$GITHUB_WORKSPACE/action_error.txt"
-            echo "STOP_EXECUTION=true" >> $GITHUB_ENV
-            ;;
-          *)
-            echo "❌ Entorno desconocido: $ENV_RAW"
-            echo "Error: El entorno '$ENV_RAW' no es válido." > "$GITHUB_WORKSPACE/action_error.txt"
-            echo "Entornos permitidos: staging (o alias: stg)." >> "$GITHUB_WORKSPACE/action_error.txt"
-            exit 1
-            ;;
-        esac
-
-        echo "DEPLOY_TAG=$TAG" >> $GITHUB_ENV
-        echo "TARGET_ENV=$TARGET_ENV" >> $GITHUB_ENV
-        echo "STOP_EXECUTION=false" >> $GITHUB_ENV
-
-    - name: Handle Invalid Command
-      if: steps.parse.outputs.is_valid == 'false'
-      shell: bash
-      env:
-        ERR_MSG: ${{ steps.parse.outputs.error_msg }}
-      run: |
-        if [ "$ERR_MSG" == "ignored_bot_response" ] || [ "$ERR_MSG" == "wrong_prefix" ]; then
-          echo "SKIP=true" >> $GITHUB_ENV
-        else
-          echo "Error de sintaxis: El comando no cumple el formato requerido." > "$GITHUB_WORKSPACE/action_error.txt"
-          echo "Uso correcto: \`deploy -t <tag> -e <staging|prod>\`" >> "$GITHUB_WORKSPACE/action_error.txt"
-          exit 1
-        fi
+    - name: Validate & Prepare Context
+      id: ctx
+      uses: ./actions/deploy-validate-context
+      with:
+        tag: ${{ steps.parse.outputs.tag }}
+        env_raw: ${{ steps.parse.outputs.env }}
+        is_valid_command: ${{ steps.parse.outputs.is_valid }}
+        error_msg: ${{ steps.parse.outputs.error_msg }}
 
     - name: Notify Start Deployment
-      if: ${{ env.SKIP == 'false' && env.STOP_EXECUTION == 'false' }}
+      if: ${{ steps.ctx.outputs.skip == 'false' && steps.ctx.outputs.stop_execution == 'false' }}
       uses: ./actions/notify
       with:
         github_token: ${{ env.COMMENT_TOKEN }}
         pr_number: ${{ github.event.issue.number || github.event.pull_request.number }}
         webhook_url: ${{ inputs.google_chat_webhook }}
-        pr_message: "🚀 Iniciando Despliegue de ${{ inputs.image_name }} (${{ env.DEPLOY_TAG }}) a ${{ env.TARGET_ENV }}..."
+        pr_message: "🚀 Iniciando Despliegue de ${{ inputs.image_name }} (${{ steps.ctx.outputs.deploy_tag }}) a ${{ steps.ctx.outputs.target_env }}..."
         chat_message: |
           🚀 **Iniciando Despliegue**
           - **Imagen:** `${{ inputs.image_name }}`
-          - **Tag:** `${{ env.DEPLOY_TAG }}`
-          - **Entorno:** `${{ env.TARGET_ENV }}`
+          - **Tag:** `${{ steps.ctx.outputs.deploy_tag }}`
+          - **Entorno:** `${{ steps.ctx.outputs.target_env }}`
           - [Ver Logs del Action](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
           ⏳ Procesando...
 
-    - name: Normalize GitOps repository reference
-      if: ${{ env.SKIP == 'false' && env.STOP_EXECUTION == 'false' }}
-      shell: bash
-      run: |
-        set -euo pipefail
-        RAW="${{ inputs.gitops_repo }}"
-        if [ -z "$RAW" ]; then
-          echo "gitops_repo no puede ser vacío"
-          exit 1
-        fi
-        repo="$RAW"
-        repo="${repo#https://github.com/}"
-        repo="${repo#http://github.com/}"
-        repo="${repo#github.com/}"
-        repo="${repo#git@github.com:}"
-        repo="${repo#git@www.github.com:}"
-        repo="${repo#www.github.com/}"
-        repo="${repo#/}"
-        repo="${repo%.git}"
-        if ! echo "$repo" | grep -q '/'; then
-          echo "No se pudo normalizar el repo GitOps (esperado owner/repo): $RAW"
-          exit 1
-        fi
-        echo "GITOPS_REPO=$repo" >> $GITHUB_ENV
-        echo "Repositorio GitOps normalizado: $repo"
+    - name: Normalize GitOps repository
+      if: ${{ steps.ctx.outputs.skip == 'false' && steps.ctx.outputs.stop_execution == 'false' }}
+      id: norm
+      uses: ./actions/util-normalize-repo
+      with:
+        repo_input: ${{ inputs.gitops_repo }}
 
-    - name: Select manifest path
-      if: ${{ env.SKIP == 'false' && env.STOP_EXECUTION == 'false' }}
-      shell: bash
-      run: |
-        set -euo pipefail
-        if [ "${{ env.TARGET_ENV }}" = "prod" ]; then
-          manifest="${{ inputs.prod_manifest_path }}"
-        else
-          manifest="${{ inputs.staging_manifest_path }}"
-        fi
-        echo "MANIFEST_PATH=${manifest}" >> $GITHUB_ENV
+    - name: Select Manifest Path
+      if: ${{ steps.ctx.outputs.skip == 'false' && steps.ctx.outputs.stop_execution == 'false' }}
+      id: manifest
+      uses: ./actions/deploy-select-manifest
+      with:
+        target_env: ${{ steps.ctx.outputs.target_env }}
+        staging_path: ${{ inputs.staging_manifest_path }}
+        prod_path: ${{ inputs.prod_manifest_path }}
 
     - name: GitOps Update & PR
-      if: ${{ env.SKIP == 'false' && env.STOP_EXECUTION == 'false' }}
+      if: ${{ steps.ctx.outputs.skip == 'false' && steps.ctx.outputs.stop_execution == 'false' }}
       id: gitops
       uses: ./actions/gitops-pr
       with:
-        gitops_repo: ${{ env.GITOPS_REPO }}
+        gitops_repo: ${{ steps.norm.outputs.repo_normalized }}
         gitops_token: ${{ inputs.github_token }}
-        manifest_path: ${{ env.MANIFEST_PATH }}
+        manifest_path: ${{ steps.manifest.outputs.manifest_path }}
         container_name: ${{ inputs.image_name }}
-        image_tag: ${{ env.DEPLOY_TAG }}
-        target_env: ${{ env.TARGET_ENV }}
+        image_tag: ${{ steps.ctx.outputs.deploy_tag }}
+        target_env: ${{ steps.ctx.outputs.target_env }}
         base_branch: ${{ inputs.base_branch }}
 
     - name: Get GKE credentials (Staging)
-      if: ${{ env.SKIP == 'false' && env.STOP_EXECUTION == 'false' && steps.gitops.outputs.needs_restart == 'true' && env.TARGET_ENV == 'staging' }}
+      if: ${{ steps.ctx.outputs.skip == 'false' && steps.ctx.outputs.stop_execution == 'false' && steps.gitops.outputs.needs_restart == 'true' && steps.ctx.outputs.target_env == 'staging' }}
       uses: google-github-actions/get-gke-credentials@v1
       with:
         cluster_name: ${{ inputs.staging_cluster_name }}
@@ -202,7 +135,7 @@ runs:
         project_id: ${{ inputs.project_id }}
 
     - name: Get GKE credentials (Prod)
-      if: ${{ env.SKIP == 'false' && env.STOP_EXECUTION == 'false' && steps.gitops.outputs.needs_restart == 'true' && env.TARGET_ENV == 'prod' }}
+      if: ${{ steps.ctx.outputs.skip == 'false' && steps.ctx.outputs.stop_execution == 'false' && steps.gitops.outputs.needs_restart == 'true' && steps.ctx.outputs.target_env == 'prod' }}
       uses: google-github-actions/get-gke-credentials@v1
       with:
         cluster_name: ${{ inputs.prod_cluster_name }}
@@ -210,75 +143,31 @@ runs:
         project_id: ${{ inputs.project_id }}
 
     - name: Restart Deployment
-      if: ${{ env.SKIP == 'false' && env.STOP_EXECUTION == 'false' && steps.gitops.outputs.needs_restart == 'true' }}
-      shell: bash
-      env:
-        DEPLOYMENT_NAME: ${{ inputs.deployment_name || inputs.image_name }}
-        K8S_NAMESPACE: ${{ inputs.namespace }}
-      run: |
-        set -euo pipefail
-        echo "Reiniciando deployment '$DEPLOYMENT_NAME' en namespace '$K8S_NAMESPACE'..."
-        kubectl rollout restart deployment/"$DEPLOYMENT_NAME" -n "$K8S_NAMESPACE"
-        kubectl rollout status deployment/"$DEPLOYMENT_NAME" -n "$K8S_NAMESPACE"
-        echo "RESTART_SUCCESS=true" >> $GITHUB_ENV
+      if: ${{ steps.ctx.outputs.skip == 'false' && steps.ctx.outputs.stop_execution == 'false' && steps.gitops.outputs.needs_restart == 'true' }}
+      id: restart
+      uses: ./actions/k8s-rollout-restart
+      with:
+        deployment_name: ${{ inputs.deployment_name || inputs.image_name }}
+        namespace: ${{ inputs.namespace }}
 
     - name: Generate Report Message
       id: report
-      if: always() && env.SKIP == 'false'
-      uses: actions/github-script@v7
-      env:
-        JOB_STATUS: ${{ job.status }}
-        ERRFILE: ${{ github.workspace }}/action_error.txt
-        GITOPS_PR_URL: ${{ steps.gitops.outputs.pr_url }}
-        DEPLOY_TAG: ${{ env.DEPLOY_TAG }}
-        TARGET_ENV: ${{ env.TARGET_ENV }}
-        NEEDS_RESTART: ${{ steps.gitops.outputs.needs_restart }}
-        RESTART_SUCCESS: ${{ env.RESTART_SUCCESS }}
+      if: always() && steps.ctx.outputs.skip == 'false'
+      uses: ./actions/deploy-report
       with:
-        script: |
-          const fs = require('fs');
-          const commentBody = context.payload.comment?.body || '';
-          
-          if (/^✅|^❌|^Imagen actualizada|^No se pudo actualizar/i.test(commentBody)) {
-            core.info('El comentario parece ser una respuesta automática.');
-            return;
-          }
-          
-          const errFile = process.env.ERRFILE;
-          const hasError = fs.existsSync(errFile) && fs.readFileSync(errFile, 'utf8').trim().length > 0;
-          const prUrl = process.env.GITOPS_PR_URL || '';
-          const deployTag = process.env.DEPLOY_TAG || '(tag no disponible)';
-          const targetEnv = process.env.TARGET_ENV || '(entorno no disponible)';
-          const jobStatus = process.env.JOB_STATUS;
-
-          let body = '';
-          if (hasError) {
-            body = '❌ El despliegue del tag "' + deployTag + '" hacia "' + targetEnv + '" falló.\n\n```\n' +
-              fs.readFileSync(errFile, 'utf8') + '\n```\n';
-            if (prUrl) body += 'Se alcanzó a crear la PR en GitOps: ' + prUrl + '\n';
-          } else if (jobStatus === 'failure' || jobStatus === 'cancelled') {
-            body = '❌ **Error Crítico:** Workflow fallido.';
-          } else if (prUrl) {
-            body = '✅ Tag "' + deployTag + '" desplegado en "' + targetEnv + '".\n' +
-              'PR en GitOps: ' + prUrl + '\n';
-          } else if (process.env.NEEDS_RESTART === 'true') {
-             if (process.env.RESTART_SUCCESS === 'true') {
-                body = '✅ Tag "' + deployTag + '" ya existía en "' + targetEnv + '".\n' +
-                       'Se ha reiniciado el deployment exitosamente.';
-             } else {
-                body = '❌ Tag "' + deployTag + '" ya existía, pero falló el reinicio.';
-             }
-          } else {
-            body = '✅Tag "' + deployTag + '" ya estaba aplicado en "' + targetEnv + '".\n';
-          }
-
-          core.setOutput('deploy_message', body);
+        job_status: ${{ job.status }}
+        gitops_pr_url: ${{ steps.gitops.outputs.pr_url }}
+        deploy_tag: ${{ steps.ctx.outputs.deploy_tag }}
+        target_env: ${{ steps.ctx.outputs.target_env }}
+        needs_restart: ${{ steps.gitops.outputs.needs_restart }}
+        restart_success: ${{ steps.restart.outputs.success }}
+        error_file_path: ${{ github.workspace }}/action_error.txt
 
     - name: Notify Final Result
-      if: always() && env.SKIP == 'false'
+      if: always() && steps.ctx.outputs.skip == 'false'
       uses: ./actions/notify
       with:
         github_token: ${{ env.COMMENT_TOKEN }}
         pr_number: ${{ github.event.issue.number || github.event.pull_request.number }}
         webhook_url: ${{ inputs.google_chat_webhook }}
-        pr_message: ${{ steps.report.outputs.deploy_message }}
+        pr_message: ${{ steps.report.outputs.message }}

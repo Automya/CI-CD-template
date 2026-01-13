@@ -1,0 +1,27 @@
+name: "Initialize Deploy Context"
+description: "Initializes environment variables for the deploy workflow"
+inputs:
+  source_repo_token:
+    description: "Token for source repo"
+    required: false
+  github_token:
+    description: "Fallback GitHub token"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Init
+      shell: bash
+      run: |
+        set -euo pipefail
+        : > "$GITHUB_WORKSPACE/action_error.txt"
+        
+        if [ -n "${{ inputs.source_repo_token }}" ]; then
+          echo "COMMENT_TOKEN=${{ inputs.source_repo_token }}" >> $GITHUB_ENV
+        else
+          echo "COMMENT_TOKEN=${{ inputs.github_token }}" >> $GITHUB_ENV
+        fi
+        
+        echo "SKIP=false" >> $GITHUB_ENV
+

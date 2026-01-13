@@ -1,0 +1,37 @@
+name: "Select Manifest Path"
+description: "Selects the correct manifest path based on environment"
+inputs:
+  target_env:
+    description: "Target environment (staging/prod)"
+    required: true
+  staging_path:
+    description: "Path for staging"
+    required: true
+  prod_path:
+    description: "Path for prod"
+    required: true
+
+outputs:
+  manifest_path:
+    description: "The selected manifest path"
+    value: ${{ steps.select.outputs.path }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Select
+      id: select
+      shell: bash
+      env:
+        ENV: ${{ inputs.target_env }}
+        STAGING: ${{ inputs.staging_path }}
+        PROD: ${{ inputs.prod_path }}
+      run: |
+        if [ "$ENV" = "prod" ]; then
+          PATH="$PROD"
+        else
+          PATH="$STAGING"
+        fi
+        echo "path=$PATH" >> "$GITHUB_OUTPUT"
+        echo "MANIFEST_PATH=$PATH" >> "$GITHUB_ENV"
+
