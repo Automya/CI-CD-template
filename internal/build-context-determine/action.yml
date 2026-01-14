@@ -17,6 +17,10 @@ inputs:
   github_token:
     description: "GitHub token for API calls"
     required: true
+  allowed_tags:
+    description: "Comma-separated list of additional allowed tags (case-insensitive, e.g., 'DEV,dev')"
+    required: false
+    default: ""
 
 outputs:
   branch:
@@ -47,6 +51,7 @@ runs:
         PR_BRANCH: ${{ inputs.parsed_branch }}
         PR_TAG: ${{ inputs.parsed_tag }}
         GH_TOKEN: ${{ inputs.github_token }}
+        ALLOWED_TAGS: ${{ inputs.allowed_tags }}
       run: |
         TAG=""
         BRANCH=""
@@ -80,11 +85,37 @@ runs:
            
            # Validation logic
            is_semver() { [[ "$1" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; }
+           
+           # Check if tag is in allowed list (case-insensitive)
+           is_allowed_tag() {
+             local tag_upper=$(echo "$1" | tr '[:lower:]' '[:upper:]')
+             # Always allow MAIN/main
+             if [[ "$tag_upper" == "MAIN" ]]; then return 0; fi
+             # Check additional allowed tags
+             if [[ -n "$ALLOWED_TAGS" ]]; then
+               IFS=',' read -ra TAGS <<< "$ALLOWED_TAGS"
+               for allowed_tag in "${TAGS[@]}"; do
+                 allowed_tag_upper=$(echo "$allowed_tag" | tr '[:lower:]' '[:upper:]' | xargs)
+                 if [[ "$tag_upper" == "$allowed_tag_upper" ]]; then return 0; fi
+               done
+             fi
+             return 1
+           }
 
-           if [[ "$BRANCH" == "main" && -n "$PR_TAG" && "$PR_TAG" != "main" ]]; then
-             if ! is_semver "$PR_TAG"; then LOGICAL_STATUS="invalid_tag_main"; fi
+           if [[ "$BRANCH" == "main" && -n "$PR_TAG" ]]; then
+             # If tag is "main" (case-insensitive), allow it
+             PR_TAG_UPPER=$(echo "$PR_TAG" | tr '[:lower:]' '[:upper:]')
+             if [[ "$PR_TAG_UPPER" != "MAIN" ]]; then
+               # For other tags, must be semver or in allowed list
+               if ! is_allowed_tag "$PR_TAG" && ! is_semver "$PR_TAG"; then 
+                 LOGICAL_STATUS="invalid_tag_main"
+               fi
+             fi
            elif [[ "$BRANCH" != "main" && -n "$PR_TAG" ]]; then
-             if is_semver "$PR_TAG"; then LOGICAL_STATUS="invalid_tag_branch"; fi
+             # For non-main branches, semver tags are invalid, but allowed tags are OK
+             if is_semver "$PR_TAG" && ! is_allowed_tag "$PR_TAG"; then 
+               LOGICAL_STATUS="invalid_tag_branch"
+             fi
            fi
 
         elif [[ "$EVENT" == "release" ]]; then

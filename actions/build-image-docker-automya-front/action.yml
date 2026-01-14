@@ -52,6 +52,7 @@ runs:
         parsed_branch: ${{ steps.parse.outputs.branch }}
         parsed_tag: ${{ steps.parse.outputs.tag }}
         github_token: ${{ env.GH_TOKEN }}
+        allowed_tags: "DEV,dev"
 
     - name: Checkout code
       if: steps.ctx.outputs.branch != ''
