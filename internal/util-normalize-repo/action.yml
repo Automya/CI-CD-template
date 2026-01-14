@@ -1,0 +1,43 @@
+name: "Normalize GitOps Repo"
+description: "Normalizes a repository URL/string to owner/repo format"
+inputs:
+  repo_input:
+    description: "Raw repository string"
+    required: true
+
+outputs:
+  repo_normalized:
+    description: "Normalized owner/repo"
+    value: ${{ steps.norm.outputs.repo }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Normalize
+      id: norm
+      shell: bash
+      env:
+        RAW: ${{ inputs.repo_input }}
+      run: |
+        if [ -z "$RAW" ]; then
+          echo "❌ Error: gitops_repo cannot be empty"
+          exit 1
+        fi
+        
+        repo="$RAW"
+        repo="${repo#https://github.com/}"
+        repo="${repo#http://github.com/}"
+        repo="${repo#github.com/}"
+        repo="${repo#git@github.com:}"
+        repo="${repo#git@www.github.com:}"
+        repo="${repo#www.github.com/}"
+        repo="${repo#/}"
+        repo="${repo%.git}"
+        
+        if ! echo "$repo" | grep -q '/'; then
+          echo "❌ Error: Could not normalize repo (expected owner/repo): $RAW"
+          exit 1
+        fi
+        
+        echo "repo=$repo" >> "$GITHUB_OUTPUT"
+

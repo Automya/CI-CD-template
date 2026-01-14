@@ -1,0 +1,28 @@
+name: "Setup Java & Gradle"
+description: "Sets up Java and makes Gradle wrapper executable"
+inputs:
+  java-version:
+    description: "Java version"
+    required: false
+    default: "17"
+  distribution:
+    description: "Java distribution"
+    required: false
+    default: "temurin"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up JDK
+      uses: actions/setup-java@v4
+      with:
+        java-version: ${{ inputs.java-version }}
+        distribution: ${{ inputs.distribution }}
+
+    - name: Make Gradle wrapper executable
+      shell: bash
+      run: |
+        if [ -f "./gradlew" ]; then
+          chmod +x ./gradlew
+        fi
+

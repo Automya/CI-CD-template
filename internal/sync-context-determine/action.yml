@@ -1,0 +1,121 @@
+name: "Sync Context Determine"
+description: "Determines context for sync-config action (source file, target configmap, checkout ref)"
+inputs:
+  staging_source:
+    description: 'Path for Staging source file'
+    required: true
+  prod_source:
+    description: 'Path for Prod source file'
+    required: true
+  staging_configmap:
+    description: 'Path for Staging ConfigMap'
+    required: true
+  prod_configmap:
+    description: 'Path for Prod ConfigMap'
+    required: true
+  parsed_branch:
+    description: "Branch parsed from comment (-b)"
+    required: false
+  parsed_env:
+    description: "Env parsed from comment (-e)"
+    required: false
+  is_valid_command:
+    description: "Result from parse-comment (true/false)"
+    required: false
+    default: "false"
+  github_token:
+    description: "GitHub Token for API calls"
+    required: true
+
+outputs:
+  sync_branch:
+    description: "The source branch to sync from"
+    value: ${{ steps.ctx.outputs.sync_branch }}
+  target_env:
+    description: "The target environment (staging/prod)"
+    value: ${{ steps.ctx.outputs.target_env }}
+  target_configmap:
+    description: "Path to the target ConfigMap in GitOps"
+    value: ${{ steps.ctx.outputs.target_configmap }}
+  source_file_path:
+    description: "Relative path to source file in source repo"
+    value: ${{ steps.ctx.outputs.source_file_path }}
+  source_repo:
+    description: "Source repository owner/repo"
+    value: ${{ steps.ctx.outputs.source_repo }}
+  checkout_ref:
+    description: "Git ref to checkout from source repo"
+    value: ${{ steps.ctx.outputs.checkout_ref }}
+  skip:
+    description: "True if workflow should skip"
+    value: ${{ steps.ctx.outputs.skip }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Determine
+      id: ctx
+      shell: bash
+      env:
+        IS_VALID: ${{ inputs.is_valid_command }}
+        SYNC_BRANCH: ${{ inputs.parsed_branch }}
+        ENV_RAW: ${{ inputs.parsed_env }}
+        GH_TOKEN: ${{ inputs.github_token }}
+      run: |
+        # Check command validity
+        if [ "$IS_VALID" != "true" ] || [ -z "$SYNC_BRANCH" ] || [ -z "$ENV_RAW" ]; then
+           echo "skip=true" >> "$GITHUB_OUTPUT"
+           echo "SKIP=true" >> "$GITHUB_ENV"
+           exit 0
+        fi
+
+        # Determine Environment Paths
+        ENV_LOWER=$(echo "$ENV_RAW" | tr '[:upper:]' '[:lower:]')
+        case "$ENV_LOWER" in
+          staging|stage|st|stag|stg)
+            TARGET_ENV="staging"
+            TARGET_CONFIGMAP="${{ inputs.staging_configmap }}"
+            SOURCE_FILE_PATH="${{ inputs.staging_source }}"
+            ;;
+          prod|production|prd)
+            TARGET_ENV="prod"
+            TARGET_CONFIGMAP="${{ inputs.prod_configmap }}"
+            SOURCE_FILE_PATH="${{ inputs.prod_source }}"
+            ;;
+          *)
+            echo "Error: Entorno no soportado: $ENV_RAW"
+            exit 1
+            ;;
+        esac
+
+        # Determine Checkout Ref (PR or Branch)
+        PR_NUMBER="${{ github.event.issue.number }}"
+        if [ -z "$PR_NUMBER" ]; then PR_NUMBER="${{ github.event.pull_request.number }}"; fi
+        
+        SOURCE_REPO=""
+        CHECKOUT_REF=""
+
+        if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "null" ]; then
+           API_URL="https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER"
+           # Fetch PR data quietly
+           PR_DATA=$(curl -sS -H "Authorization: token $GH_TOKEN" "$API_URL" || echo "{}")
+           SOURCE_REPO=$(echo "$PR_DATA" | jq -r '.head.repo.full_name // empty')
+           CHECKOUT_REF=$(echo "$PR_DATA" | jq -r '.head.ref // empty')
+        fi
+
+        # Fallback to current repo/branch if not found (or not a PR event)
+        if [ -z "$SOURCE_REPO" ]; then
+           SOURCE_REPO="${{ github.repository }}"
+           CHECKOUT_REF="$SYNC_BRANCH"
+        fi
+
+        # Output results
+        echo "sync_branch=$SYNC_BRANCH" >> "$GITHUB_OUTPUT"
+        echo "target_env=$TARGET_ENV" >> "$GITHUB_OUTPUT"
+        echo "target_configmap=$TARGET_CONFIGMAP" >> "$GITHUB_OUTPUT"
+        echo "source_file_path=$SOURCE_FILE_PATH" >> "$GITHUB_OUTPUT"
+        echo "source_repo=$SOURCE_REPO" >> "$GITHUB_OUTPUT"
+        echo "checkout_ref=$CHECKOUT_REF" >> "$GITHUB_OUTPUT"
+        echo "skip=false" >> "$GITHUB_OUTPUT"
+        echo "SKIP=false" >> "$GITHUB_ENV"
+

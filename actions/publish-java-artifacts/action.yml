@@ -1,12 +1,11 @@
 name: publish-java-artifacts
-description: "Composite action: sube artifacts a Artifacts (repo central). Lee variables del entorno del job consumidor."
+description: "Composite action: sube artifacts a Artifacts (repo central)."
 
 runs:
   using: "composite"
   steps:
-    - name: Make Gradle wrapper executable
-      run: chmod +x ./gradlew
-      shell: bash
+    - name: Setup Java
+      uses: ./internal/setup-java-gradle
       
     - name: Publish with Gradle
       run: ./gradlew --no-daemon publish -x test

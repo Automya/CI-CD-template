@@ -1,0 +1,103 @@
+name: "Determine Build Context"
+description: "Determines branch, tag, and status for Docker builds based on event type"
+inputs:
+  event_name:
+    description: "GitHub event name (issue_comment or release)"
+    required: true
+  is_valid_command:
+    description: "Result from parse-comment (true/false)"
+    required: false
+    default: "false"
+  parsed_branch:
+    description: "Branch parsed from comment"
+    required: false
+  parsed_tag:
+    description: "Tag parsed from comment"
+    required: false
+  github_token:
+    description: "GitHub token for API calls"
+    required: true
+
+outputs:
+  branch:
+    description: "The actual git branch to checkout"
+    value: ${{ steps.ctx.outputs.branch }}
+  safe_branch:
+    description: "Branch name safe for docker tags (slashes replaced)"
+    value: ${{ steps.ctx.outputs.safe_branch }}
+  tag:
+    description: "The final docker tag to use"
+    value: ${{ steps.ctx.outputs.tag }}
+  status:
+    description: "Logical status (e.g., invalid_tag_main, success, etc.)"
+    value: ${{ steps.ctx.outputs.status }}
+  job_url:
+    description: "URL to the workflow run"
+    value: ${{ steps.ctx.outputs.job_url }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Determine
+      id: ctx
+      shell: bash
+      env:
+        EVENT: ${{ inputs.event_name }}
+        IS_VALID: ${{ inputs.is_valid_command }}
+        PR_BRANCH: ${{ inputs.parsed_branch }}
+        PR_TAG: ${{ inputs.parsed_tag }}
+        GH_TOKEN: ${{ inputs.github_token }}
+      run: |
+        TAG=""
+        BRANCH=""
+        SAFE_BRANCH=""
+        LOGICAL_STATUS=""
+        JOB_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+        if [[ "$EVENT" == "issue_comment" ]]; then
+           if [[ "$IS_VALID" != "true" ]]; then
+              echo "status=not_build_command" >> "$GITHUB_OUTPUT"
+              exit 0
+           fi
+
+           BRANCH="$PR_BRANCH"
+           if [[ -z "$BRANCH" ]]; then
+             # Fetch branch from PR API
+             PR_URL=$(jq -r '.issue.pull_request.url // empty' < "$GITHUB_EVENT_PATH")
+             if [ -n "$PR_URL" ]; then
+               BRANCH=$(curl -s -H "Authorization: token $GH_TOKEN" "$PR_URL" | jq -r .head.ref)
+             fi
+           fi
+           
+           if [ -z "$BRANCH" ] || [ "$BRANCH" == "null" ]; then
+             echo "Error: Could not determine branch from PR."
+             echo "status=error_branch_unknown" >> "$GITHUB_OUTPUT"
+             exit 0
+           fi
+           
+           SAFE_BRANCH=$(echo "$BRANCH" | tr '/' '-')
+           TAG="${PR_TAG:-$SAFE_BRANCH}"
+           
+           # Validation logic
+           is_semver() { [[ "$1" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; }
+
+           if [[ "$BRANCH" == "main" && -n "$PR_TAG" && "$PR_TAG" != "main" ]]; then
+             if ! is_semver "$PR_TAG"; then LOGICAL_STATUS="invalid_tag_main"; fi
+           elif [[ "$BRANCH" != "main" && -n "$PR_TAG" ]]; then
+             if is_semver "$PR_TAG"; then LOGICAL_STATUS="invalid_tag_branch"; fi
+           fi
+
+        elif [[ "$EVENT" == "release" ]]; then
+           TAG="${{ github.event.release.tag_name }}"
+           BRANCH="${{ github.event.release.target_commitish }}"
+           if [[ "$BRANCH" != "main" ]]; then LOGICAL_STATUS="invalid_release_branch"; fi
+        else
+           LOGICAL_STATUS="not_supported_event"
+        fi
+
+        echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+        echo "safe_branch=$SAFE_BRANCH" >> "$GITHUB_OUTPUT"
+        echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+        echo "job_url=$JOB_URL" >> "$GITHUB_OUTPUT"
+        echo "status=$LOGICAL_STATUS" >> "$GITHUB_OUTPUT"
+

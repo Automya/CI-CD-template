@@ -1,0 +1,61 @@
+name: "Notify Status"
+description: "Sends notifications to GitHub PR comments and Google Chat."
+inputs:
+  github_token:
+    description: "GitHub Token for API access"
+    required: true
+  pr_number:
+    description: "Pull Request number to comment on"
+    required: false
+  repo:
+    description: "Repository owner/name"
+    required: false
+    default: ${{ github.repository }}
+  webhook_url:
+    description: "Google Chat Webhook URL"
+    required: false
+  pr_message:
+    description: "Message to post on PR"
+    required: false
+  chat_message:
+    description: "Message to post on Google Chat (defaults to pr_message if empty)"
+    required: false
+
+runs:
+  using: "composite"
+  steps:
+    - name: Notify
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        PR_NUMBER: ${{ inputs.pr_number }}
+        REPO: ${{ inputs.repo }}
+        WEBHOOK_URL: ${{ inputs.webhook_url }}
+        PR_MSG: ${{ inputs.pr_message }}
+        CHAT_MSG: ${{ inputs.chat_message }}
+      run: |
+        # 1. Notify GitHub PR
+        if [ -n "$PR_NUMBER" ] && [ -n "$PR_MSG" ]; then
+          echo "Comentando en PR #$PR_NUMBER..."
+          # Escape quotes for JSON
+          clean_msg=$(echo "$PR_MSG" | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+          
+          curl -s -H "Authorization: token $GH_TOKEN" \
+            -X POST \
+            -d "{\"body\":\"$clean_msg\"}" \
+            "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/comments" > /dev/null
+        fi
+
+        # 2. Notify Google Chat
+        if [ -n "$WEBHOOK_URL" ]; then
+          MSG="${CHAT_MSG:-$PR_MSG}"
+          if [ -n "$MSG" ]; then
+            echo "Enviando notificación a Google Chat..."
+            jq -n --arg text "$MSG" '{text: $text}' > notification.json
+            
+            curl -s -H "Content-Type: application/json" \
+                 -d @notification.json \
+                 "$WEBHOOK_URL" || echo "Advertencia: Falló la notificación a Google Chat."
+          fi
+        fi
+

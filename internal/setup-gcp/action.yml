@@ -1,0 +1,46 @@
+name: "Setup GCP & Docker"
+description: "Authenticates to GCP using Workload Identity Federation and configures Docker."
+inputs:
+  workload_identity_provider:
+    description: "GCP Workload Identity Provider resource name"
+    required: false
+    default: "projects/244039780319/locations/global/workloadIdentityPools/github-actions-pool/providers/github-provider-automya"
+  service_account:
+    description: "GCP Service Account email"
+    required: false
+    default: "github-ci-sa@automya.iam.gserviceaccount.com"
+  region:
+    description: "GCP Region for Artifact Registry (e.g. us-central1)"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Clean GCP credential env vars
+      shell: bash
+      run: |
+        unset GOOGLE_APPLICATION_CREDENTIALS
+        unset CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE
+        unset GOOGLE_GHA_CREDS_PATH
+        unset GCP_SA_KEY
+        # Export empty to ensure they are cleared in current env
+        export GOOGLE_APPLICATION_CREDENTIALS=""
+        export CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE=""
+        export GOOGLE_GHA_CREDS_PATH=""
+        export GCP_SA_KEY=""
+
+    - name: Install gcloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+
+    - name: Authenticate to GCP
+      uses: google-github-actions/auth@v1
+      with:
+        create_credentials_file: true
+        workload_identity_provider: ${{ inputs.workload_identity_provider }}
+        service_account: ${{ inputs.service_account }}
+
+    - name: Configure Docker for GCP
+      shell: bash
+      run: |
+        gcloud auth configure-docker "${{ inputs.region }}-docker.pkg.dev" --quiet
+

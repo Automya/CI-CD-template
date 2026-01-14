@@ -1,0 +1,76 @@
+name: "Docker Build & Push"
+description: "Builds and pushes a Docker image to a registry"
+inputs:
+  image_full_name:
+    description: "Full image name including registry and tag"
+    required: true
+  build_args:
+    description: "List of build-time variables"
+    required: false
+    default: ""
+  context:
+    description: "Build context"
+    required: false
+    default: "."
+
+outputs:
+  status:
+    description: "Result status (success, build_failed, push_failed)"
+    value: ${{ steps.push.outputs.status }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Build
+      id: build
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image_full_name }}
+        ARGS: ${{ inputs.build_args }}
+        CTX: ${{ inputs.context }}
+      run: |
+        set +e
+        echo "Building $IMAGE..."
+        
+        # Construct build command
+        CMD="docker build -t $IMAGE"
+        if [ -n "$ARGS" ]; then
+           # Add build args
+           CMD="$CMD $ARGS"
+        fi
+        CMD="$CMD $CTX"
+        
+        echo "Running: $CMD"
+        eval "$CMD"
+        
+        if [ $? -ne 0 ]; then
+          echo "❌ Build failed"
+          echo "status=build_failed" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        echo "status=success" >> "$GITHUB_OUTPUT"
+
+    - name: Push
+      if: steps.build.outputs.status == 'success'
+      id: push
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image_full_name }}
+      run: |
+        set +e
+        echo "Pushing $IMAGE..."
+        docker push "$IMAGE"
+        
+        if [ $? -ne 0 ]; then
+          echo "❌ Push failed"
+          echo "status=push_failed" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        echo "✅ Push success"
+        echo "status=success" >> "$GITHUB_OUTPUT"
+    
+    - name: Fail Handler
+      if: steps.build.outputs.status == 'build_failed'
+      shell: bash
+      run: |
+        echo "status=build_failed" >> "$GITHUB_OUTPUT"

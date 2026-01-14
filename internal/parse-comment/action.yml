@@ -1,0 +1,76 @@
+name: "Parse PR Comment"
+description: "Parses deploy/build commands from PR comments"
+inputs:
+  comment_body:
+    description: "The raw comment body"
+    required: true
+  command_prefix:
+    description: "Expected command prefix (e.g. build, deploy)"
+    required: false
+    default: "build"
+
+outputs:
+  action:
+    description: "The action detected (build/deploy or empty)"
+    value: ${{ steps.parse.outputs.action }}
+  tag:
+    description: "Extracted tag (-t)"
+    value: ${{ steps.parse.outputs.tag }}
+  env:
+    description: "Extracted environment (-e)"
+    value: ${{ steps.parse.outputs.env }}
+  branch:
+    description: "Extracted branch (-b)"
+    value: ${{ steps.parse.outputs.branch }}
+  is_valid:
+    description: "True if command format is valid"
+    value: ${{ steps.parse.outputs.is_valid }}
+  error_msg:
+    description: "Error message if invalid"
+    value: ${{ steps.parse.outputs.error_msg }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Parse
+      id: parse
+      shell: bash
+      env:
+        BODY: ${{ inputs.comment_body }}
+        PREFIX: ${{ inputs.command_prefix }}
+      run: |
+        set +e
+        
+        # Clean whitespace
+        CLEAN_BODY="$(echo "$BODY" | sed -E 's/^[[:space:]]+//')"
+        
+        # Check if it's an automated response (ignore)
+        if echo "$CLEAN_BODY" | grep -qE '^\:white_check_mark\:|^\:x\:|^Imagen actualizada|^No se pudo actualizar'; then
+          echo "is_valid=false" >> "$GITHUB_OUTPUT"
+          echo "error_msg=ignored_bot_response" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        # Check prefix
+        if ! echo "$CLEAN_BODY" | grep -qi "^$PREFIX"; then
+          echo "is_valid=false" >> "$GITHUB_OUTPUT"
+          echo "error_msg=wrong_prefix" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        # Extract flags
+        TAG=""
+        ENV=""
+        BRANCH=""
+
+        [[ "$CLEAN_BODY" =~ -t[[:space:]]+([^\ ]+) ]] && TAG="${BASH_REMATCH[1]}"
+        [[ "$CLEAN_BODY" =~ -e[[:space:]]+([^\ ]+) ]] && ENV="${BASH_REMATCH[1]}"
+        [[ "$CLEAN_BODY" =~ -b[[:space:]]+([^\ ]+) ]] && BRANCH="${BASH_REMATCH[1]}"
+
+        # Output results
+        echo "action=$PREFIX" >> "$GITHUB_OUTPUT"
+        echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+        echo "env=$ENV" >> "$GITHUB_OUTPUT"
+        echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+        echo "is_valid=true" >> "$GITHUB_OUTPUT"
+
