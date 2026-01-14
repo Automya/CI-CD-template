@@ -20,9 +20,16 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - name: Checkout CI-CD-template
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ github.action_repository }}
+        ref: ${{ github.action_ref }}
+        path: .github/actions-template
+
     - name: Notify Start
       if: github.event_name == 'issue_comment'
-      uses: ./internal/notify
+      uses: .github/actions-template/internal/notify
       with:
         github_token: ${{ env.GH_TOKEN }}
         pr_number: ${{ github.event.issue.number }}
@@ -38,14 +45,14 @@ runs:
     - name: Parse Comment
       if: github.event_name == 'issue_comment'
       id: parse
-      uses: ./internal/parse-comment
+      uses: .github/actions-template/internal/parse-comment
       with:
         comment_body: ${{ github.event.comment.body }}
         command_prefix: "build"
 
     - name: Determine Context
       id: ctx
-      uses: ./internal/build-context-determine
+      uses: .github/actions-template/internal/build-context-determine
       with:
         event_name: ${{ github.event_name }}
         is_valid_command: ${{ steps.parse.outputs.is_valid }}
@@ -61,20 +68,20 @@ runs:
 
     - name: Setup GCP & Docker
       if: steps.ctx.outputs.status == ''
-      uses: ./internal/setup-gcp
+      uses: .github/actions-template/internal/setup-gcp
       with:
         region: ${{ env.GCP_REGION }}
 
     - name: Build and Push
       if: steps.ctx.outputs.status == ''
       id: build
-      uses: ./internal/docker-build-push
+      uses: .github/actions-template/internal/docker-build-push
       with:
         image_full_name: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ steps.ctx.outputs.tag }}
 
     - name: GitOps Update (Release only)
       if: github.event_name == 'release' && steps.build.outputs.status == 'success'
-      uses: ./internal/gitops-pr
+      uses: .github/actions-template/internal/gitops-pr
       with:
         gitops_repo: ${{ inputs.gitops_repo }}
         gitops_token: ${{ inputs.gitops_token }}
@@ -86,7 +93,7 @@ runs:
     - name: Prepare Report
       if: github.event_name == 'issue_comment'
       id: report
-      uses: ./internal/build-report-message
+      uses: .github/actions-template/internal/build-report-message
       with:
         status: ${{ steps.ctx.outputs.status || steps.build.outputs.status }}
         job_url: ${{ steps.ctx.outputs.job_url }}
@@ -94,7 +101,7 @@ runs:
 
     - name: Notify Result
       if: github.event_name == 'issue_comment'
-      uses: ./internal/notify
+      uses: .github/actions-template/internal/notify
       with:
         github_token: ${{ env.GH_TOKEN }}
         pr_number: ${{ github.event.issue.number }}
