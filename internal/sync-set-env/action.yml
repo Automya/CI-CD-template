@@ -1,0 +1,25 @@
+name: "Sync Set Environment"
+description: "Sets environment variables for sync-config reporting"
+inputs:
+  gitops_pr_url:
+    description: "URL of the created GitOps PR"
+    required: false
+  sync_branch:
+    description: "Source branch that was synced"
+    required: true
+  target_env:
+    description: "Target environment (staging/prod)"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set Environment Variables
+      shell: bash
+      run: |
+        if [ -n "${{ inputs.gitops_pr_url }}" ]; then
+          echo "GITOPS_PR_URL=${{ inputs.gitops_pr_url }}" >> $GITHUB_ENV
+        fi
+        echo "SYNC_BRANCH=${{ inputs.sync_branch }}" >> $GITHUB_ENV
+        echo "TARGET_ENV=${{ inputs.target_env }}" >> $GITHUB_ENV
+

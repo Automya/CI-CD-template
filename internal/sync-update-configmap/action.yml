@@ -1,0 +1,44 @@
+name: "Sync Update ConfigMap"
+description: "Updates a ConfigMap with content from a source file"
+inputs:
+  source_file:
+    description: "Path to the source file"
+    required: true
+  target_file:
+    description: "Path to the target ConfigMap file"
+    required: true
+  configmap_key:
+    description: "Key in the ConfigMap data to update"
+    required: true
+  working_directory:
+    description: "Working directory where the target file is located"
+    required: false
+    default: "."
+
+runs:
+  using: "composite"
+  steps:
+    - name: Ensure yq is available
+      shell: bash
+      run: |
+        if ! command -v yq >/dev/null 2>&1; then
+          curl -sSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq
+          chmod +x /usr/local/bin/yq
+        fi
+
+    - name: Update ConfigMap
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      env:
+        SOURCE_FILE: ${{ inputs.source_file }}
+        TARGET_FILE: ${{ inputs.target_file }}
+        KEY: ${{ inputs.configmap_key }}
+      run: |
+        set -e
+        if [ ! -f "$SOURCE_FILE" ] || [ ! -f "$TARGET_FILE" ]; then
+           echo "❌ Error: Archivo origen o destino no encontrado."
+           exit 1
+        fi
+        sed -i 's/[[:space:]]*$//' "$SOURCE_FILE"
+        yq eval -i ".data[\"$KEY\"] = load_str(\"$SOURCE_FILE\") | .data[\"$KEY\"] style=\"literal\"" "$TARGET_FILE"
+

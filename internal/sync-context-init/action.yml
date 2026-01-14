@@ -1,0 +1,23 @@
+name: "Sync Context Init"
+description: "Initializes comment token for sync-config action"
+inputs:
+  source_repo_token:
+    description: "Token to comment in the source PR"
+    required: false
+    default: ""
+  github_token:
+    description: "GitHub token with write permissions"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Initialize Comment Token
+      shell: bash
+      run: |
+        if [ -n "${{ inputs.source_repo_token }}" ]; then
+          echo "COMMENT_TOKEN=${{ inputs.source_repo_token }}" >> $GITHUB_ENV
+        else
+          echo "COMMENT_TOKEN=${{ inputs.github_token }}" >> $GITHUB_ENV
+        fi
+
