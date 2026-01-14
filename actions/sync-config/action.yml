@@ -129,26 +129,167 @@ runs:
         sed -i 's/[[:space:]]*$//' "$SOURCE_FILE"
         yq eval -i ".data[\"$KEY\"] = load_str(\"$SOURCE_FILE\") | .data[\"$KEY\"] style=\"literal\"" "$TARGET_FILE"
 
-    - name: Create PR
-      if: ${{ steps.ctx.outputs.skip == 'false' }}
-      id: create-pr
-      uses: ./internal/create-pr
-      with:
-        token: ${{ inputs.github_token }}
-        repo: ${{ steps.norm.outputs.repo_normalized }}
-        base_branch: ${{ inputs.branch }}
-        head_branch: "config-sync/${{ steps.ctx.outputs.target_env }}-${{ github.run_id }}"
-        commit_message: "${{ inputs.commit_message }} (${{ steps.ctx.outputs.target_env }})"
-        pr_title: "${{ inputs.commit_message }} (${{ steps.ctx.outputs.target_env }})"
-        pr_body: "Automatic update of config from workflow run ${{ github.run_id }}"
-        working_directory: "gitops-repo"
+        if [ -z "$pr_number" ]; then
+          echo "Failed to create PR. Response:"
+          echo "$pr_response" | tee -a "$ERRFILE"
+          exit 1
+        fi
 
-    - name: Report Result
-      if: always() && steps.ctx.outputs.skip == 'false'
-      uses: ./internal/notify
+        echo "GITOPS_PR_URL=$pr_url" >> $GITHUB_ENV
+        echo "PR created: $pr_url (Number: $pr_number)"
+
+        # Auto-merge the PR
+        echo "Attempting to auto-merge PR #$pr_number..."
+        merge_url="https://api.github.com/repos/${GITOPS_REPO}/pulls/${pr_number}/merge"
+        merge_payload='{"commit_title":"'"${PR_TITLE}"'","merge_method":"merge"}'
+        
+        merge_response=$(curl -sS -X PUT -H "Authorization: token ${TOKEN}" \
+          -H "Accept: application/vnd.github+json" "$merge_url" -d "$merge_payload")
+
+        merged=$(echo "$merge_response" | python3 -c 'import json,sys; print(str(json.load(sys.stdin).get("merged", False)).lower())' 2>/dev/null || echo "false")
+
+        if [ "$merged" = "true" ]; then
+          echo "PR merged successfully."
+          
+          # Delete the branch
+          echo "Deleting branch $NEW_BRANCH..."
+          delete_branch_url="https://api.github.com/repos/${GITOPS_REPO}/git/refs/heads/${NEW_BRANCH}"
+          curl -sS -X DELETE -H "Authorization: token ${TOKEN}" \
+            -H "Accept: application/vnd.github+json" "$delete_branch_url"
+          echo "Branch deleted."
+        else
+          echo "Failed to auto-merge PR."
+          echo "Response: $merge_response" | tee -a "$ERRFILE"
+          exit 1
+        fi
+
+    - name: Ensure comment token is available
+      if: always()
+      shell: bash
+      run: |
+        if [ -z "${COMMENT_TOKEN:-}" ]; then
+          if [ -n "${{ inputs.source_repo_token }}" ]; then
+            echo "COMMENT_TOKEN=${{ inputs.source_repo_token }}" >> $GITHUB_ENV
+          else
+            echo "COMMENT_TOKEN=${{ inputs.github_token }}" >> $GITHUB_ENV
+          fi
+        fi
+        echo "Token disponible para comentario"
+
+    - name: Report result back to source PR
+      if: always() && env.SKIP != 'true'
+      uses: actions/github-script@v7
+      env:
+        COMMENT_TOKEN: ${{ env.COMMENT_TOKEN }}
+        ERRFILE: ${{ github.workspace }}/action_error.txt
+        GITOPS_PR_URL: ${{ env.GITOPS_PR_URL }}
+        SYNC_BRANCH: ${{ env.SYNC_BRANCH }}
+        TARGET_ENV: ${{ env.TARGET_ENV }}
+        NO_CHANGES: ${{ env.NO_CHANGES }}
       with:
-        github_token: ${{ env.COMMENT_TOKEN }}
-        pr_number: ${{ github.event.issue.number || github.event.pull_request.number }}
-        pr_message: |
-          ${{ steps.create-pr.outputs.pr_url != '' && ':white_check_mark: Configuración sincronizada exitosamente.\nPR en GitOps: ' || '' }}${{ steps.create-pr.outputs.pr_url }}
-          ${{ steps.create-pr.outputs.pr_url == '' && ':x: Falló la creación de la PR.' || '' }}
+        github-token: ${{ env.COMMENT_TOKEN }}
+        script: |
+          console.log('=== Script iniciado ===');
+          core.info('=== Iniciando script de reporte ===');
+          
+          try {
+            core.info(`COMMENT_TOKEN definido: ${!!process.env.COMMENT_TOKEN}`);
+            core.info(`ERRFILE: ${process.env.ERRFILE || '(no definido)'}`);
+            core.info(`GITOPS_PR_URL: ${process.env.GITOPS_PR_URL || '(no definido)'}`);
+            core.info(`SYNC_BRANCH: ${process.env.SYNC_BRANCH || '(no definido)'}`);
+            core.info(`TARGET_ENV: ${process.env.TARGET_ENV || '(no definido)'}`);
+            core.info(`NO_CHANGES: ${process.env.NO_CHANGES || '(no definido)'}`);
+            
+            if (!process.env.COMMENT_TOKEN) {
+              core.error('ERROR: COMMENT_TOKEN no está definido. No se puede publicar comentario.');
+              core.error('Variables de entorno disponibles: ' + Object.keys(process.env).filter(k => k.includes('TOKEN') || k.includes('COMMENT')).join(', '));
+              return;
+            }
+            
+            const fs = require('fs');
+            
+            // Obtener el cuerpo del comentario de manera más robusta
+            const commentBody = (context.payload?.comment?.body || 
+                               context.payload?.issue?.body || 
+                               '').toString();
+            
+            core.info(`Comentario recibido (longitud: ${commentBody.length}): ${commentBody.substring(0, Math.min(100, commentBody.length))}`);
+            
+            if (/^:white_check_mark:|^:x:|^Configuración sincronizada|^No se pudo sincronizar/i.test(commentBody)) {
+              core.info('El comentario parece ser una respuesta automática. No se publicará respuesta para evitar loops.');
+              return;
+            }
+            
+            const errFile = process.env.ERRFILE || '';
+            let hasError = false;
+            
+            if (errFile && fs.existsSync(errFile)) {
+              try {
+                const errorContent = fs.readFileSync(errFile, 'utf8').trim();
+                hasError = errorContent.length > 0;
+                if (hasError) {
+                  core.info(`Error detectado en archivo: ${errorContent.substring(0, 200)}...`);
+                }
+              } catch (err) {
+                core.warning(`No se pudo leer el archivo de error: ${err.message}`);
+              }
+            }
+            
+            const prUrl = process.env.GITOPS_PR_URL || '';
+            const syncBranch = process.env.SYNC_BRANCH || '(rama no disponible)';
+            const targetEnv = process.env.TARGET_ENV || '(entorno no disponible)';
+            let body = '';
+            
+            if (hasError) {
+              const errorContent = fs.readFileSync(errFile, 'utf8');
+              body = ':x: La sincronización de la rama "' + syncBranch + '" hacia "' + targetEnv + '" falló.\n\n```\n' +
+                errorContent + '\n```\n';
+              if (prUrl) body += 'Se alcanzó a crear la PR en GitOps: ' + prUrl + '\n';
+            } else if (process.env.NO_CHANGES === 'true') {
+              body = ':white_check_mark: Configuración de la rama "' + syncBranch + '" ya estaba sincronizada en "' + targetEnv + '". No se realizaron cambios.\n';
+            } else if (prUrl) {
+              body = ':white_check_mark: Configuración de la rama "' + syncBranch + '" sincronizada en "' + targetEnv + '".\n' +
+                'PR en GitOps: ' + prUrl + '\n';
+            } else {
+              body = ':white_check_mark: Configuración sincronizada exitosamente.\n';
+            }
+
+            // Obtener el número de issue/PR de manera más robusta
+            const issueNumber = context.issue?.number ||
+              context.payload?.issue?.number ||
+              context.payload?.pull_request?.number ||
+              context.payload?.number;
+            
+            core.info(`Número de issue/PR detectado: ${issueNumber}`);
+            
+            if (!issueNumber) {
+              core.warning('No se encontró número de PR/issue para comentar.');
+              core.info('Context payload keys: ' + Object.keys(context.payload || {}).join(', '));
+              core.info('Context issue: ' + JSON.stringify(context.issue || {}));
+              return;
+            }
+
+            const repoOwner = context.repo?.owner || context.payload?.repository?.owner?.login || context.repository?.owner?.login;
+            const repoName = context.repo?.repo || context.payload?.repository?.name || context.repository?.name;
+            
+            if (!repoOwner || !repoName) {
+              core.error('No se pudo determinar el owner/repo del repositorio.');
+              return;
+            }
+
+            core.info(`Comentando en ${repoOwner}/${repoName}#${issueNumber}`);
+            
+            await github.rest.issues.createComment({
+              owner: repoOwner,
+              repo: repoName,
+              issue_number: issueNumber,
+              body
+            });
+            
+            core.info('Comentario publicado exitosamente.');
+          } catch (error) {
+            core.error('Error al publicar comentario:');
+            core.error(error.message);
+            core.error(error.stack);
+            throw error;
+          }
