@@ -5,7 +5,7 @@ runs:
   using: "composite"
   steps:
     - name: Setup Java
-      uses: ./internal/setup-java-gradle
+      uses: Automya/CI-CD-template/internal/setup-java-gradle@main
       
     - name: Publish with Gradle
       run: ./gradlew --no-daemon publish -x test

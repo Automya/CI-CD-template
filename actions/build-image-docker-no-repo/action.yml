@@ -10,7 +10,7 @@ runs:
   steps:
     - name: Notify Start
       if: github.event_name == 'issue_comment'
-      uses: ./internal/notify
+      uses: Automya/CI-CD-template/internal/notify@main
       with:
         github_token: ${{ env.GH_TOKEN }}
         pr_number: ${{ github.event.issue.number }}
@@ -26,14 +26,14 @@ runs:
     - name: Parse Comment
       if: github.event_name == 'issue_comment'
       id: parse
-      uses: ./internal/parse-comment
+      uses: Automya/CI-CD-template/internal/parse-comment@main
       with:
         comment_body: ${{ github.event.comment.body }}
         command_prefix: "build"
 
     - name: Determine Context
       id: ctx
-      uses: ./internal/build-context-determine
+      uses: Automya/CI-CD-template/internal/build-context-determine@main
       with:
         event_name: ${{ github.event_name }}
         is_valid_command: ${{ steps.parse.outputs.is_valid }}
@@ -49,21 +49,21 @@ runs:
 
     - name: Setup GCP & Docker
       if: steps.ctx.outputs.status == ''
-      uses: ./internal/setup-gcp
+      uses: Automya/CI-CD-template/internal/setup-gcp@main
       with:
         region: ${{ env.GCP_REGION }}
 
     - name: Build and Push
       if: steps.ctx.outputs.status == ''
       id: build
-      uses: ./internal/docker-build-push
+      uses: Automya/CI-CD-template/internal/docker-build-push@main
       with:
         image_full_name: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ steps.ctx.outputs.tag }}
 
     - name: Prepare Report
       if: github.event_name == 'issue_comment'
       id: report
-      uses: ./internal/build-report-message
+      uses: Automya/CI-CD-template/internal/build-report-message@main
       with:
         status: ${{ steps.ctx.outputs.status || steps.build.outputs.status }}
         job_url: ${{ steps.ctx.outputs.job_url }}
@@ -71,7 +71,7 @@ runs:
 
     - name: Notify Result
       if: github.event_name == 'issue_comment'
-      uses: ./internal/notify
+      uses: Automya/CI-CD-template/internal/notify@main
       with:
         github_token: ${{ env.GH_TOKEN }}
         pr_number: ${{ github.event.issue.number }}

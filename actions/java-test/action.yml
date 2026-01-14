@@ -14,7 +14,7 @@ runs:
   using: "composite"
   steps:
     - name: Setup Java
-      uses: ./internal/setup-java-gradle
+      uses: Automya/CI-CD-template/internal/setup-java-gradle@main
       with:
         java-version: ${{ inputs.java-version }}
 

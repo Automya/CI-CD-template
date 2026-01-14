@@ -53,14 +53,14 @@ runs:
 
     - name: Parse Sync Command
       id: parse
-      uses: ./internal/parse-comment
+      uses: Automya/CI-CD-template/internal/parse-comment@main
       with:
         comment_body: ${{ github.event.comment.body }}
         command_prefix: "sync"
 
     - name: Determine Context
       id: ctx
-      uses: ./internal/sync-context-determine
+      uses: Automya/CI-CD-template/internal/sync-context-determine@main
       with:
         staging_source: ${{ inputs.staging_source_file }}
         prod_source: ${{ inputs.prod_source_file }}
@@ -73,7 +73,7 @@ runs:
 
     - name: Notify Start
       if: ${{ steps.ctx.outputs.skip == 'false' }}
-      uses: ./internal/notify
+      uses: Automya/CI-CD-template/internal/notify@main
       with:
         github_token: ${{ env.COMMENT_TOKEN }}
         pr_number: ${{ github.event.issue.number || github.event.pull_request.number }}
@@ -90,7 +90,7 @@ runs:
     - name: Normalize GitOps Repo
       if: ${{ steps.ctx.outputs.skip == 'false' }}
       id: norm
-      uses: ./internal/util-normalize-repo
+      uses: Automya/CI-CD-template/internal/util-normalize-repo@main
       with:
         repo_input: ${{ inputs.gitops_repo }}
 
