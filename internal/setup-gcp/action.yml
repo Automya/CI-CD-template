@@ -31,6 +31,11 @@ runs:
 
     - name: Install gcloud SDK
       uses: google-github-actions/setup-gcloud@v2
+      env:
+        GOOGLE_APPLICATION_CREDENTIALS: ""
+        CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE: ""
+        GOOGLE_GHA_CREDS_PATH: ""
+        GCP_SA_KEY: ""
 
     - name: Authenticate to GCP
       uses: google-github-actions/auth@v1
