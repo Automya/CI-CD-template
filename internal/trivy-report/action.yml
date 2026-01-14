@@ -1,0 +1,54 @@
+name: "Trivy Report & Check"
+description: "Generates HTML report and checks for vulnerabilities using Trivy"
+inputs:
+  scan_ref:
+    description: "File to scan (e.g. bom.json)"
+    required: true
+  trivyignore_file:
+    description: "Path to .trivyignore"
+    required: false
+    default: ".trivyignore"
+  severity:
+    description: "Severities to check"
+    required: false
+    default: "CRITICAL,HIGH"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Download Trivy HTML Template
+      shell: bash
+      run: |
+        curl -sL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/html.tpl -o html.tpl
+
+    - name: Generate Trivy Report (HTML)
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'sbom'
+        scan-ref: ${{ inputs.scan_ref }}
+        format: 'template'
+        template: '@html.tpl'
+        output: 'trivy-report.html'
+        ignore-unfixed: true
+        severity: ${{ inputs.severity }}
+        trivyignores: ${{ inputs.trivyignore_file }}
+        exit-code: '0'
+
+    - name: Upload Trivy Report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: trivy-report
+        path: trivy-report.html
+
+    - name: Check Vulnerabilities (Console)
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'sbom'
+        scan-ref: ${{ inputs.scan_ref }}
+        format: 'table'
+        exit-code: '1'
+        ignore-unfixed: true
+        severity: ${{ inputs.severity }}
+        trivyignores: ${{ inputs.trivyignore_file }}
+
