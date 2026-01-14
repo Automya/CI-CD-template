@@ -36,6 +36,26 @@ outputs:
 runs:
   using: "composite"
   steps:
+    - name: Checkout CI-CD-template if needed
+      if: github.repository != 'Automya/CI-CD-template'
+      uses: actions/checkout@v4
+      with:
+        repository: Automya/CI-CD-template
+        ref: main
+        path: .github/actions-template
+
+    - name: Determine action path
+      id: action-path
+      shell: bash
+      run: |
+        if [ -d ".github/actions-template/internal/create-pr" ] || [ -f ".github/actions-template/internal/create-pr/action.yml" ]; then
+          echo "path=.github/actions-template/internal/create-pr" >> "$GITHUB_OUTPUT"
+        elif [ -d "./internal/create-pr" ] || [ -f "./internal/create-pr/action.yml" ]; then
+          echo "path=./internal/create-pr" >> "$GITHUB_OUTPUT"
+        else
+          echo "path=.github/actions-template/internal/create-pr" >> "$GITHUB_OUTPUT"
+        fi
+
     - name: Ensure yq is available
       shell: bash
       run: |
@@ -90,7 +110,7 @@ runs:
     - name: Create PR
       id: create-pr
       if: steps.update.outputs.needs_restart != 'true'
-      uses: ./internal/create-pr
+      uses: ${{ steps.action-path.outputs.path }}
       with:
         token: ${{ inputs.gitops_token }}
         repo: ${{ inputs.gitops_repo }}

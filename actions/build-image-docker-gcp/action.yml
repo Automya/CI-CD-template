@@ -23,8 +23,8 @@ runs:
     - name: Checkout CI-CD-template
       uses: actions/checkout@v4
       with:
-        repository: ${{ github.action_repository }}
-        ref: ${{ github.action_ref }}
+        repository: Automya/CI-CD-template
+        ref: ${{ github.action_ref || 'main' }}
         path: .github/actions-template
 
     - name: Notify Start
