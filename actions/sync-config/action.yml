@@ -350,8 +350,21 @@ runs:
           exit 1
         fi
 
+    - name: Ensure comment token is available
+      if: always()
+      shell: bash
+      run: |
+        if [ -z "${COMMENT_TOKEN:-}" ]; then
+          if [ -n "${{ inputs.source_repo_token }}" ]; then
+            echo "COMMENT_TOKEN=${{ inputs.source_repo_token }}" >> $GITHUB_ENV
+          else
+            echo "COMMENT_TOKEN=${{ inputs.github_token }}" >> $GITHUB_ENV
+          fi
+        fi
+        echo "Token disponible para comentario"
+
     - name: Report result back to source PR
-      if: always() && env.SKIP == 'false'
+      if: always() && env.SKIP != 'true'
       uses: actions/github-script@v7
       env:
         COMMENT_TOKEN: ${{ env.COMMENT_TOKEN }}
@@ -363,15 +376,31 @@ runs:
       with:
         github-token: ${{ env.COMMENT_TOKEN }}
         script: |
+          console.log('=== Script iniciado ===');
+          core.info('=== Iniciando script de reporte ===');
+          
           try {
+            core.info(`COMMENT_TOKEN definido: ${!!process.env.COMMENT_TOKEN}`);
+            core.info(`ERRFILE: ${process.env.ERRFILE || '(no definido)'}`);
+            core.info(`GITOPS_PR_URL: ${process.env.GITOPS_PR_URL || '(no definido)'}`);
+            core.info(`SYNC_BRANCH: ${process.env.SYNC_BRANCH || '(no definido)'}`);
+            core.info(`TARGET_ENV: ${process.env.TARGET_ENV || '(no definido)'}`);
+            core.info(`NO_CHANGES: ${process.env.NO_CHANGES || '(no definido)'}`);
+            
+            if (!process.env.COMMENT_TOKEN) {
+              core.error('ERROR: COMMENT_TOKEN no está definido. No se puede publicar comentario.');
+              core.error('Variables de entorno disponibles: ' + Object.keys(process.env).filter(k => k.includes('TOKEN') || k.includes('COMMENT')).join(', '));
+              return;
+            }
+            
             const fs = require('fs');
             
             // Obtener el cuerpo del comentario de manera más robusta
-            const commentBody = context.payload?.comment?.body || 
+            const commentBody = (context.payload?.comment?.body || 
                                context.payload?.issue?.body || 
-                               '';
+                               '').toString();
             
-            core.info(`Comentario recibido: ${commentBody.substring(0, 100)}...`);
+            core.info(`Comentario recibido (longitud: ${commentBody.length}): ${commentBody.substring(0, Math.min(100, commentBody.length))}`);
             
             if (/^:white_check_mark:|^:x:|^Configuración sincronizada|^No se pudo sincronizar/i.test(commentBody)) {
               core.info('El comentario parece ser una respuesta automática. No se publicará respuesta para evitar loops.');
