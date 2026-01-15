@@ -37,7 +37,7 @@ Construye y publica imágenes Docker en GCP Artifact Registry con feedback en PR
 - `REPOSITORY`: Nombre del repositorio en Artifact Registry
 - `IMAGE_NAME`: Nombre de la imagen Docker
 - `GH_TOKEN`: Token de GitHub
-- `MAVEN_USERNAME`, `MAVEN_PASSWORD`, `MAVEN_USERNAME2`, `MAVEN_PASSWORD2`: Credenciales Maven (opcionales)
+- `MAVEN_USERNAME`, `MAVEN_PASSWORD`: Credenciales Maven (opcionales)
 
 #### `build-image-docker-automya-front`
 Similar a `build-image-docker-gcp` pero configurado específicamente para proyectos frontend con tags permitidos `DEV` y `dev`.
