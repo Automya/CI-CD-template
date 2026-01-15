@@ -43,7 +43,7 @@ Construye y publica imágenes Docker en GCP Artifact Registry con feedback en PR
 Similar a `build-image-docker-gcp` pero configurado específicamente para proyectos frontend con tags permitidos `DEV` y `dev`.
 
 #### `build-image-docker-no-repo`
-Versión simplificada sin integración GitOps, solo construye y publica imágenes.
+Versión que no contiene autnticacion con repo de artefactos de github, utilizado mayormente para fronts o microservicios que no necesiten usar artefactos del registro de github, solo construye y publica imágenes.
 
 ### 2. Despliegue (`deploy-app`)
 
