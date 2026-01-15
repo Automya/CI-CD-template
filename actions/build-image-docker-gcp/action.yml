@@ -71,6 +71,11 @@ runs:
       uses: Automya/CI-CD-template/internal/docker-build-push@main
       with:
         image_full_name: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ steps.ctx.outputs.tag }}
+        build_args: |
+          --build-arg MAVEN_USERNAME="${MAVEN_USERNAME}" \
+          --build-arg MAVEN_PASSWORD="${MAVEN_PASSWORD}" \
+          --build-arg MAVEN_USERNAME2="${MAVEN_USERNAME2}" \
+          --build-arg MAVEN_PASSWORD2="${MAVEN_PASSWORD2}"
 
     - name: GitOps Update (Release only)
       if: github.event_name == 'release' && steps.build.outputs.status == 'success'

@@ -28,6 +28,10 @@ runs:
         IMAGE: ${{ inputs.image_full_name }}
         ARGS: ${{ inputs.build_args }}
         CTX: ${{ inputs.context }}
+        MAVEN_USERNAME: ${{ env.MAVEN_USERNAME }}
+        MAVEN_PASSWORD: ${{ env.MAVEN_PASSWORD }}
+        MAVEN_USERNAME2: ${{ env.MAVEN_USERNAME2 }}
+        MAVEN_PASSWORD2: ${{ env.MAVEN_PASSWORD2 }}
       run: |
         set +e
         echo "Building $IMAGE..."
@@ -35,8 +39,9 @@ runs:
         # Construct build command
         CMD="docker build -t $IMAGE"
         if [ -n "$ARGS" ]; then
-           # Add build args
-           CMD="$CMD $ARGS"
+           # Expand environment variables in build args using eval
+           EXPANDED_ARGS=$(eval echo "$ARGS")
+           CMD="$CMD $EXPANDED_ARGS"
         fi
         CMD="$CMD $CTX"
         
