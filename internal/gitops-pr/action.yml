@@ -36,13 +36,8 @@ outputs:
 runs:
   using: "composite"
   steps:
-    - name: Ensure yq is available
-      shell: bash
-      run: |
-        if ! command -v yq >/dev/null 2>&1; then
-          curl -sSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq
-          chmod +x /usr/local/bin/yq
-        fi
+    - name: Setup yq
+      uses: Automya/CI-CD-template/internal/setup-yq@main
 
     - name: Checkout GitOps repository
       uses: actions/checkout@v4

@@ -1,0 +1,127 @@
+name: "GCP Docker Build & Push"
+description: "Builds and pushes Docker images to GCP Artifact Registry with optional GitOps integration and PR feedback."
+inputs:
+  # GCP Configuration (required - no defaults for security)
+  workload_identity_provider:
+    description: "GCP Workload Identity Provider resource name"
+    required: true
+  service_account:
+    description: "GCP Service Account email"
+    required: true
+
+  # Build Configuration
+  build_args:
+    description: "Additional docker build arguments (e.g., --build-arg KEY=value)"
+    required: false
+    default: ""
+  allowed_tags:
+    description: "Comma-separated list of allowed tags for PR comment builds (e.g., DEV,dev)"
+    required: false
+    default: ""
+
+  # GitOps Configuration (optional)
+  gitops_repo:
+    description: "GitOps repository in format owner/repo (enables GitOps on release)"
+    required: false
+  prod_manifest_path:
+    description: "Path to the production manifest in GitOps repo"
+    required: false
+  gitops_token:
+    description: "Token with write permissions to GitOps repo"
+    required: false
+  container_name:
+    description: "Container name to update in manifest (defaults to IMAGE_NAME env var)"
+    required: false
+
+  # Notifications
+  google_chat_webhook:
+    description: "Google Chat Webhook URL for notifications"
+    required: false
+
+runs:
+  using: "composite"
+  steps:
+    - name: Notify Start
+      if: github.event_name == 'issue_comment'
+      uses: Automya/CI-CD-template/internal/notify@main
+      with:
+        github_token: ${{ env.GH_TOKEN }}
+        pr_number: ${{ github.event.issue.number }}
+        webhook_url: ${{ inputs.google_chat_webhook }}
+        pr_message: "Building image, please wait..."
+        chat_message: |
+          **Starting Build**
+          - **Repo:** ${{ github.repository }}
+          - **PR:** #${{ github.event.issue.number }}
+          - [View Logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+    - name: Parse Comment
+      if: github.event_name == 'issue_comment'
+      id: parse
+      uses: Automya/CI-CD-template/internal/parse-comment@main
+      with:
+        comment_body: ${{ github.event.comment.body }}
+        command_prefix: "build"
+
+    - name: Determine Context
+      id: ctx
+      uses: Automya/CI-CD-template/internal/build-context-determine@main
+      with:
+        event_name: ${{ github.event_name }}
+        is_valid_command: ${{ steps.parse.outputs.is_valid }}
+        parsed_branch: ${{ steps.parse.outputs.branch }}
+        parsed_tag: ${{ steps.parse.outputs.tag }}
+        github_token: ${{ env.GH_TOKEN }}
+        allowed_tags: ${{ inputs.allowed_tags }}
+
+    - name: Checkout code
+      if: steps.ctx.outputs.branch != ''
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ steps.ctx.outputs.branch }}
+
+    - name: Setup GCP & Docker
+      if: steps.ctx.outputs.status == ''
+      uses: Automya/CI-CD-template/internal/setup-gcp@main
+      with:
+        workload_identity_provider: ${{ inputs.workload_identity_provider }}
+        service_account: ${{ inputs.service_account }}
+        region: ${{ env.GCP_REGION }}
+
+    - name: Build and Push
+      if: steps.ctx.outputs.status == ''
+      id: build
+      uses: Automya/CI-CD-template/internal/docker-build-push@main
+      with:
+        image_full_name: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ steps.ctx.outputs.tag }}
+        build_args: ${{ inputs.build_args }}
+
+    - name: GitOps Update (Release only)
+      if: github.event_name == 'release' && steps.build.outputs.status == 'success' && inputs.gitops_repo != ''
+      uses: Automya/CI-CD-template/internal/gitops-pr@main
+      with:
+        gitops_repo: ${{ inputs.gitops_repo }}
+        gitops_token: ${{ inputs.gitops_token }}
+        manifest_path: ${{ inputs.prod_manifest_path }}
+        container_name: ${{ inputs.container_name || env.IMAGE_NAME }}
+        image_tag: ${{ steps.ctx.outputs.tag }}
+        target_env: "prod"
+
+    - name: Prepare Report
+      if: github.event_name == 'issue_comment'
+      id: report
+      uses: Automya/CI-CD-template/internal/build-report-message@main
+      with:
+        status: ${{ steps.ctx.outputs.status || steps.build.outputs.status }}
+        job_url: ${{ steps.ctx.outputs.job_url }}
+        image_full_name: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ steps.ctx.outputs.tag }}
+
+    - name: Notify Result
+      if: github.event_name == 'issue_comment'
+      uses: Automya/CI-CD-template/internal/notify@main
+      with:
+        github_token: ${{ env.GH_TOKEN }}
+        pr_number: ${{ github.event.issue.number }}
+        webhook_url: ${{ inputs.google_chat_webhook }}
+        pr_message: ${{ steps.report.outputs.pr_message }}
+        chat_message: ${{ steps.report.outputs.chat_message }}

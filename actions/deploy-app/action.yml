@@ -128,7 +128,7 @@ runs:
 
     - name: Get GKE credentials (Staging)
       if: ${{ steps.ctx.outputs.skip == 'false' && steps.ctx.outputs.stop_execution == 'false' && steps.gitops.outputs.needs_restart == 'true' && steps.ctx.outputs.target_env == 'staging' }}
-      uses: google-github-actions/get-gke-credentials@v1
+      uses: google-github-actions/get-gke-credentials@v2
       with:
         cluster_name: ${{ inputs.staging_cluster_name }}
         location: ${{ inputs.staging_cluster_location }}
@@ -136,7 +136,7 @@ runs:
 
     - name: Get GKE credentials (Prod)
       if: ${{ steps.ctx.outputs.skip == 'false' && steps.ctx.outputs.stop_execution == 'false' && steps.gitops.outputs.needs_restart == 'true' && steps.ctx.outputs.target_env == 'prod' }}
-      uses: google-github-actions/get-gke-credentials@v1
+      uses: google-github-actions/get-gke-credentials@v2
       with:
         cluster_name: ${{ inputs.prod_cluster_name }}
         location: ${{ inputs.prod_cluster_location }}

@@ -34,28 +34,42 @@ runs:
         PR_MSG: ${{ inputs.pr_message }}
         CHAT_MSG: ${{ inputs.chat_message }}
       run: |
-        # 1. Notify GitHub PR
+        # 1. Notify GitHub PR using jq for safe JSON encoding
         if [ -n "$PR_NUMBER" ] && [ -n "$PR_MSG" ]; then
-          echo "Comentando en PR #$PR_NUMBER..."
-          # Escape quotes for JSON
-          clean_msg=$(echo "$PR_MSG" | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
-          
-          curl -s -H "Authorization: token $GH_TOKEN" \
+          echo "Commenting on PR #$PR_NUMBER..."
+
+          # Use jq for safe JSON encoding
+          json_payload=$(jq -n --arg body "$PR_MSG" '{body: $body}')
+
+          response=$(curl -s -w "%{http_code}" --max-time 30 \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
             -X POST \
-            -d "{\"body\":\"$clean_msg\"}" \
-            "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/comments" > /dev/null
+            -d "$json_payload" \
+            "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/comments")
+
+          http_code="${response: -3}"
+          if [ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]; then
+            echo "PR comment posted successfully"
+          else
+            echo "::warning::Failed to post PR comment (HTTP $http_code)"
+          fi
         fi
 
         # 2. Notify Google Chat
         if [ -n "$WEBHOOK_URL" ]; then
           MSG="${CHAT_MSG:-$PR_MSG}"
           if [ -n "$MSG" ]; then
-            echo "Enviando notificación a Google Chat..."
-            jq -n --arg text "$MSG" '{text: $text}' > notification.json
-            
-            curl -s -H "Content-Type: application/json" \
-                 -d @notification.json \
-                 "$WEBHOOK_URL" || echo "Advertencia: Falló la notificación a Google Chat."
+            echo "Sending Google Chat notification..."
+
+            json_payload=$(jq -n --arg text "$MSG" '{text: $text}')
+
+            if ! curl -s --max-time 30 \
+                 -H "Content-Type: application/json" \
+                 -d "$json_payload" \
+                 "$WEBHOOK_URL" > /dev/null; then
+              echo "::warning::Failed to send Google Chat notification"
+            fi
           fi
         fi
 

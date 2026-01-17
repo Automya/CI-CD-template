@@ -1,0 +1,57 @@
+name: "Setup yq"
+description: "Installs yq (YAML processor) cross-platform"
+inputs:
+  version:
+    description: "yq version to install (default: latest)"
+    required: false
+    default: "v4.40.5"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install yq
+      shell: bash
+      env:
+        YQ_VERSION: ${{ inputs.version }}
+      run: |
+        if command -v yq >/dev/null 2>&1; then
+          echo "yq is already installed: $(yq --version)"
+          exit 0
+        fi
+
+        echo "Installing yq ${YQ_VERSION}..."
+
+        # Detect OS and architecture
+        OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+        ARCH=$(uname -m)
+
+        case "$ARCH" in
+          x86_64)  ARCH="amd64" ;;
+          aarch64) ARCH="arm64" ;;
+          arm64)   ARCH="arm64" ;;
+          *)
+            echo "::error::Unsupported architecture: $ARCH"
+            exit 1
+            ;;
+        esac
+
+        case "$OS" in
+          linux)  BINARY="yq_linux_${ARCH}" ;;
+          darwin) BINARY="yq_darwin_${ARCH}" ;;
+          *)
+            echo "::error::Unsupported OS: $OS"
+            exit 1
+            ;;
+        esac
+
+        URL="https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/${BINARY}"
+        echo "Downloading from: $URL"
+
+        if curl -sSL --max-time 60 "$URL" -o /tmp/yq; then
+          chmod +x /tmp/yq
+          sudo mv /tmp/yq /usr/local/bin/yq
+          echo "yq installed successfully: $(yq --version)"
+        else
+          echo "::error::Failed to download yq"
+          exit 1
+        fi

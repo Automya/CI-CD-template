@@ -5,18 +5,18 @@ inputs:
     description: "Full image name including registry and tag"
     required: true
   build_args:
-    description: "List of build-time variables"
+    description: "Additional docker build arguments (e.g., --build-arg KEY=value)"
     required: false
     default: ""
   context:
-    description: "Build context"
+    description: "Build context path"
     required: false
     default: "."
 
 outputs:
   status:
     description: "Result status (success, build_failed, push_failed)"
-    value: ${{ steps.push.outputs.status }}
+    value: ${{ steps.result.outputs.status }}
 
 runs:
   using: "composite"
@@ -26,56 +26,65 @@ runs:
       shell: bash
       env:
         IMAGE: ${{ inputs.image_full_name }}
-        ARGS: ${{ inputs.build_args }}
-        CTX: ${{ inputs.context }}
-        MAVEN_USERNAME: ${{ env.MAVEN_USERNAME }}
-        MAVEN_PASSWORD: ${{ env.MAVEN_PASSWORD }}
-        MAVEN_USERNAME2: ${{ env.MAVEN_USERNAME2 }}
-        MAVEN_PASSWORD2: ${{ env.MAVEN_PASSWORD2 }}
+        BUILD_ARGS: ${{ inputs.build_args }}
+        BUILD_CTX: ${{ inputs.context }}
       run: |
-        set +e
         echo "Building $IMAGE..."
-        
-        # Construct build command
-        CMD="docker build -t $IMAGE"
-        if [ -n "$ARGS" ]; then
-           # Expand environment variables in build args using eval
-           EXPANDED_ARGS=$(eval echo "$ARGS")
-           CMD="$CMD $EXPANDED_ARGS"
+
+        # Build command array safely (no eval)
+        build_cmd=(docker build -t "$IMAGE")
+
+        # Add build args if provided
+        if [ -n "$BUILD_ARGS" ]; then
+          # Read args line by line, expanding env vars safely
+          while IFS= read -r arg || [ -n "$arg" ]; do
+            arg=$(echo "$arg" | xargs)  # trim whitespace
+            [ -z "$arg" ] && continue
+            # Expand environment variables using envsubst
+            expanded_arg=$(echo "$arg" | envsubst)
+            build_cmd+=($expanded_arg)
+          done <<< "$BUILD_ARGS"
         fi
-        CMD="$CMD $CTX"
-        
-        echo "Running: $CMD"
-        eval "$CMD"
-        
-        if [ $? -ne 0 ]; then
-          echo "❌ Build failed"
+
+        build_cmd+=("$BUILD_CTX")
+
+        echo "Running: ${build_cmd[*]}"
+        if "${build_cmd[@]}"; then
+          echo "status=build_success" >> "$GITHUB_OUTPUT"
+        else
+          echo "::error::Docker build failed"
           echo "status=build_failed" >> "$GITHUB_OUTPUT"
-          exit 0
         fi
-        echo "status=success" >> "$GITHUB_OUTPUT"
 
     - name: Push
-      if: steps.build.outputs.status == 'success'
+      if: steps.build.outputs.status == 'build_success'
       id: push
       shell: bash
       env:
         IMAGE: ${{ inputs.image_full_name }}
       run: |
-        set +e
         echo "Pushing $IMAGE..."
-        docker push "$IMAGE"
-        
-        if [ $? -ne 0 ]; then
-          echo "❌ Push failed"
+        if docker push "$IMAGE"; then
+          echo "status=push_success" >> "$GITHUB_OUTPUT"
+        else
+          echo "::error::Docker push failed"
           echo "status=push_failed" >> "$GITHUB_OUTPUT"
-          exit 0
         fi
-        echo "✅ Push success"
-        echo "status=success" >> "$GITHUB_OUTPUT"
-    
-    - name: Fail Handler
-      if: steps.build.outputs.status == 'build_failed'
+
+    - name: Set Final Status
+      id: result
+      if: always()
       shell: bash
+      env:
+        BUILD_STATUS: ${{ steps.build.outputs.status }}
+        PUSH_STATUS: ${{ steps.push.outputs.status }}
       run: |
-        echo "status=build_failed" >> "$GITHUB_OUTPUT"
+        if [ "$PUSH_STATUS" = "push_success" ]; then
+          echo "status=success" >> "$GITHUB_OUTPUT"
+        elif [ "$PUSH_STATUS" = "push_failed" ]; then
+          echo "status=push_failed" >> "$GITHUB_OUTPUT"
+        elif [ "$BUILD_STATUS" = "build_failed" ]; then
+          echo "status=build_failed" >> "$GITHUB_OUTPUT"
+        else
+          echo "status=unknown" >> "$GITHUB_OUTPUT"
+        fi

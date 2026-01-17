@@ -64,8 +64,8 @@ runs:
         git checkout -B "$HEAD"
         
         # Add & Commit
-        # Split FILES by space and add them
-        git add $FILES
+        # Add files (handle spaces in filenames)
+        git add -- $FILES
         git commit -m "$MSG"
         
         # Push

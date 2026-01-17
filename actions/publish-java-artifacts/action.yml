@@ -1,12 +1,29 @@
 name: publish-java-artifacts
-description: "Composite action: sube artifacts a Artifacts (repo central)."
+description: "Publishes Java artifacts to the central repository using Gradle."
+inputs:
+  java_version:
+    description: "Java version to use"
+    required: false
+    default: "17"
+  gradle_args:
+    description: "Additional Gradle arguments"
+    required: false
+    default: ""
 
 runs:
   using: "composite"
   steps:
     - name: Setup Java
       uses: Automya/CI-CD-template/internal/setup-java-gradle@main
-      
+      with:
+        java-version: ${{ inputs.java_version }}
+
     - name: Publish with Gradle
-      run: ./gradlew --no-daemon publish -x test
       shell: bash
+      env:
+        GRADLE_ARGS: ${{ inputs.gradle_args }}
+      run: |
+        set -euo pipefail
+        echo "Publishing artifacts with Gradle..."
+        ./gradlew --no-daemon publish -x test $GRADLE_ARGS
+        echo "Artifacts published successfully"
