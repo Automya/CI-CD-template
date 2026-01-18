@@ -67,17 +67,27 @@ runs:
 
            BRANCH="$PR_BRANCH"
            if [[ -z "$BRANCH" ]]; then
-             # Fetch branch from PR API
+             # Try to fetch branch from PR API (if comment is on a PR)
              PR_URL=$(jq -r '.issue.pull_request.url // empty' < "$GITHUB_EVENT_PATH")
              if [ -n "$PR_URL" ]; then
-               BRANCH=$(curl -s -H "Authorization: token $GH_TOKEN" "$PR_URL" | jq -r .head.ref)
+               BRANCH=$(curl -s --max-time 30 -H "Authorization: token $GH_TOKEN" "$PR_URL" | jq -r '.head.ref // empty')
              fi
            fi
-           
+
+           # If still no branch (issue comment without -b flag), use default branch
            if [ -z "$BRANCH" ] || [ "$BRANCH" == "null" ]; then
-             echo "Error: Could not determine branch from PR."
-             echo "status=error_branch_unknown" >> "$GITHUB_OUTPUT"
-             exit 0
+             # Check if this is a PR or an issue
+             IS_PR=$(jq -r '.issue.pull_request // empty' < "$GITHUB_EVENT_PATH")
+             if [ -z "$IS_PR" ]; then
+               # This is an issue comment, branch must be specified with -b flag
+               echo "::error::Branch must be specified with -b flag for issue comments (e.g., 'build -b main')"
+               echo "status=error_branch_required" >> "$GITHUB_OUTPUT"
+               exit 0
+             else
+               echo "::error::Could not determine branch from PR"
+               echo "status=error_branch_unknown" >> "$GITHUB_OUTPUT"
+               exit 0
+             fi
            fi
            
            SAFE_BRANCH=$(echo "$BRANCH" | tr '/' '-')

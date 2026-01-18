@@ -1,5 +1,5 @@
 name: "GCP Docker Build & Push"
-description: "Builds and pushes Docker images to GCP Artifact Registry with optional GitOps integration and PR feedback."
+description: "Builds and pushes Docker images to GCP Artifact Registry with optional GitOps integration. Supports PR comments and issue comments (use 'build -b <branch>' for issues)."
 inputs:
   # GCP Configuration (required - no defaults for security)
   workload_identity_provider:
@@ -52,7 +52,7 @@ runs:
         chat_message: |
           **Starting Build**
           - **Repo:** ${{ github.repository }}
-          - **PR:** #${{ github.event.issue.number }}
+          - **Issue/PR:** #${{ github.event.issue.number }}
           - [View Logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
     - name: Parse Comment

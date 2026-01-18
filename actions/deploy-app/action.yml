@@ -1,8 +1,7 @@
 name: Deploy GitOps Image
 description: >
-  Actualiza el tag de una imagen en el repo de GitOps (staging o prod) leyendo el
-  comando `deploy -t <tag> -e <env>` desde un comentario de PR y sube los cambios
-  al repositorio GitOps mediante una PR automática.
+  Updates image tag in GitOps repo (staging or prod) via command `deploy -t <tag> -e <env>`
+  from PR or issue comments. Creates automatic PR in GitOps repository.
 inputs:
   gitops_repo:
     description: 'Repo GitOps destino en formato owner/repo o URL (ej: Automya/gitops).'

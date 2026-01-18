@@ -1,7 +1,7 @@
 name: Sync Config to GitOps
 description: >
   Syncs a local file (e.g., application.yml) to a ConfigMap in a GitOps repository.
-  Triggered by a PR comment: `sync -b <branch> -e <env>`.
+  Triggered by PR or issue comment: `sync -b <branch> -e <env>`.
 
 inputs:
   staging_source_file:
