@@ -387,14 +387,18 @@ class GitHubClient(IGitHubClient):
         try:
             rate_limit = self._github.get_rate_limit()
 
+            # PyGithub >= 2.x usa rate.core, versiones anteriores usan core directamente
+            core_limit = getattr(rate_limit, "core", None) or getattr(rate_limit.rate, "core", rate_limit.rate)
+            search_limit = getattr(rate_limit, "search", None) or core_limit
+
             if is_search:
-                remaining = rate_limit.search.remaining
-                reset_time = rate_limit.search.reset
+                remaining = search_limit.remaining
+                reset_time = search_limit.reset
                 threshold = self.SEARCH_RATE_LIMIT_THRESHOLD
                 limit_type = "Search API"
             else:
-                remaining = rate_limit.core.remaining
-                reset_time = rate_limit.core.reset
+                remaining = core_limit.remaining
+                reset_time = core_limit.reset
                 threshold = self.RATE_LIMIT_THRESHOLD
                 limit_type = "Core API"
 
@@ -578,8 +582,10 @@ class GitHubClient(IGitHubClient):
         """Maneja el rate limit después de cada operación."""
         try:
             rate_limit = self._github.get_rate_limit()
-            remaining = rate_limit.core.remaining
-            reset_time = rate_limit.core.reset
+            # PyGithub >= 2.x usa rate.core, versiones anteriores usan core directamente
+            core_limit = getattr(rate_limit, "core", None) or getattr(rate_limit.rate, "core", rate_limit.rate)
+            remaining = core_limit.remaining
+            reset_time = core_limit.reset
 
             if remaining < 10:
                 self._wait_for_rate_limit_reset(reset_time, remaining, "Core API")
