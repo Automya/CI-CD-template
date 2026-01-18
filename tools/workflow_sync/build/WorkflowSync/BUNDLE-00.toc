@@ -1,3 +1,0 @@
-([('WorkflowSync',
-   '/Users/smartpadel/Documents/Proyectos/CI-CD-template/tools/workflow_sync/dist/WorkflowSync',
-   'EXECUTABLE')],)
