@@ -35,10 +35,6 @@ build = [
     "pyinstaller>=6.0",
 ]
 
-[project.scripts]
-workflow-sync = "workflow_sync.cli:main"
-workflow-sync-interactive = "workflow_sync.interactive:main"
-
 [project.urls]
 Homepage = "https://github.com/Automya/CI-CD-template"
 Repository = "https://github.com/Automya/CI-CD-template"

@@ -72,18 +72,3 @@ exe = EXE(
     entitlements_file=None,
 )
 
-# Para crear un .app bundle en macOS (opcional)
-app = BUNDLE(
-    exe,
-    name='WorkflowSync.app',
-    icon=None,
-    bundle_identifier='com.automya.workflowsync',
-    info_plist={
-        'CFBundleName': 'WorkflowSync',
-        'CFBundleDisplayName': 'Workflow Sync Tool',
-        'CFBundleVersion': '1.0.0',
-        'CFBundleShortVersionString': '1.0.0',
-        'NSHighResolutionCapable': True,
-        'LSBackgroundOnly': False,
-    },
-)

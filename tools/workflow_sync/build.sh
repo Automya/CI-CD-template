@@ -58,11 +58,9 @@ if [ -f "dist/WorkflowSync" ]; then
     echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo -e "Ejecutable: ${CYAN}dist/WorkflowSync${NC}"
-    echo -e "App Bundle: ${CYAN}dist/WorkflowSync.app${NC}"
     echo ""
-    echo -e "${YELLOW}Para distribuir:${NC}"
-    echo "  - Copia dist/WorkflowSync.app a /Applications"
-    echo "  - O comparte el archivo dist/WorkflowSync directamente"
+    echo -e "${YELLOW}Para usar:${NC}"
+    echo "  ./dist/WorkflowSync"
     echo ""
 
     # Mostrar tamaño

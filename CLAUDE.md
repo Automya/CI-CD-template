@@ -93,3 +93,36 @@ uses: Automya/CI-CD-template/internal/<action-name>@main
 There are no automated tests. Validate changes by:
 1. Creating a test workflow in a consuming repository
 2. Testing the PR comment trigger patterns: `build`, `deploy`, `sync`
+
+## Tools
+
+### Workflow Sync Tool (`tools/workflow_sync/`)
+
+Interactive terminal application to synchronize GitHub Actions workflows from a source repository to all repositories in an organization with a specific topic.
+
+**Key Features:**
+- Interactive terminal UI with ANSI colors
+- Token persistence (`~/.workflow-sync-config` with 600 permissions)
+- Auto-merge PRs with retry on conflicts
+- Automatic deletion of obsolete workflows (files in destination not in source)
+- Skip repos without `.github/workflows` folder
+- Dry-run mode for previewing changes
+- Parallel execution support
+- Standalone executable (no Python required to run)
+
+**Usage:**
+```bash
+# Build standalone executable
+cd tools/workflow_sync
+./build.sh
+
+# Run the app
+./dist/WorkflowSync
+```
+
+**Architecture:**
+- `interactive.py` - Terminal UI application (entry point)
+- `clients/github_client.py` - GitHub API wrapper with rate limiting and retry
+- `services/sync_service.py` - Sync logic with PR creation and auto-merge
+- `models.py` - Data classes (SyncConfig, SyncResult, FileChange)
+- `build.sh` / `WorkflowSync.spec` - PyInstaller packaging
