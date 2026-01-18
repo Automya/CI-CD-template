@@ -1,5 +1,14 @@
 name: "GCP Docker Build & Push (No GitOps)"
-description: "Builds and pushes Docker images to GCP Artifact Registry without GitOps integration or GitHub artifact repository authentication. Suitable for frontends and standalone microservices."
+description: |
+  Builds and pushes Docker images to GCP Artifact Registry without GitOps integration or GitHub artifact repository authentication.
+  Suitable for frontends and standalone microservices. Supports PR comments and issue comments (use 'build -b <branch>' for issues).
+
+  REQUIRED WORKFLOW PERMISSIONS for issue_comment trigger:
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      id-token: write
 inputs:
   workload_identity_provider:
     description: "GCP Workload Identity Provider resource name"
