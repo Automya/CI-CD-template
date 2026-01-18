@@ -30,6 +30,11 @@ dependencies = [
     "PyGithub>=2.1.1",
 ]
 
+[project.optional-dependencies]
+build = [
+    "pyinstaller>=6.0",
+]
+
 [project.scripts]
 workflow-sync = "workflow_sync.cli:main"
 workflow-sync-interactive = "workflow_sync.interactive:main"
