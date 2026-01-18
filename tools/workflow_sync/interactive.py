@@ -344,6 +344,9 @@ def get_sync_config(token: str) -> SyncConfig | None:
     print(f"{Colors.CYAN}─── Opciones ───{Colors.END}")
     print()
     dry_run = prompt_yes_no("Modo Dry Run (solo mostrar cambios)", default=False)
+    auto_merge = False
+    if not dry_run:
+        auto_merge = prompt_yes_no("Auto-merge PRs (mergear automáticamente)", default=False)
     parallel = prompt_yes_no("Ejecución paralela", default=False)
 
     return SyncConfig(
@@ -355,6 +358,7 @@ def get_sync_config(token: str) -> SyncConfig | None:
         files_filter=files_filter,
         max_workers=4 if parallel else 1,
         timeout=30,
+        auto_merge=auto_merge,
     )
 
 
@@ -368,6 +372,7 @@ def show_summary(config: SyncConfig):
     print(f"  Repo fuente:      {Colors.BOLD}{config.source_repo}{Colors.END}")
     print(f"  Archivos:         {Colors.BOLD}{config.files_filter or 'todos'}{Colors.END}")
     print(f"  Dry Run:          {Colors.BOLD}{'Sí' if config.dry_run else 'No'}{Colors.END}")
+    print(f"  Auto-merge:       {Colors.BOLD}{'Sí' if config.auto_merge else 'No'}{Colors.END}")
     print(f"  Paralelo:         {Colors.BOLD}{'Sí' if config.max_workers > 1 else 'No'}{Colors.END}")
     print()
 

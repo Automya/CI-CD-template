@@ -123,6 +123,11 @@ Variables de entorno (REQUERIDAS):
         default=30,
         help="Timeout para llamadas API en segundos (default: 30)",
     )
+    parser.add_argument(
+        "--auto-merge",
+        action="store_true",
+        help="Mergear PRs automáticamente después de crearlos",
+    )
 
     return parser.parse_args()
 
@@ -197,6 +202,7 @@ def create_config(args: argparse.Namespace, token: str) -> SyncConfig:
         files_filter=validated_files,
         max_workers=args.max_workers,
         timeout=args.timeout,
+        auto_merge=args.auto_merge,
     )
 
 

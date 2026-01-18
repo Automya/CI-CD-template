@@ -61,6 +61,7 @@ class SyncConfig:
         files_filter: Lista de archivos específicos a sincronizar.
         max_workers: Número máximo de workers para procesamiento paralelo.
         timeout: Timeout para llamadas API en segundos.
+        auto_merge: Si es True, mergea el PR automáticamente después de crearlo.
     """
 
     token: str
@@ -71,6 +72,7 @@ class SyncConfig:
     files_filter: list[str] = field(default_factory=list)
     max_workers: int = 4
     timeout: int = 30
+    auto_merge: bool = False
 
 
 @dataclass
@@ -81,16 +83,18 @@ class FileChange:
         filename: Nombre del archivo.
         content: Contenido nuevo del archivo.
         existing_sha: SHA del archivo existente (None si es nuevo).
+        is_deletion: Si es True, el archivo debe ser eliminado.
     """
 
     filename: str
-    content: str
+    content: str = ""
     existing_sha: str | None = None
+    is_deletion: bool = False
 
     @property
     def is_new(self) -> bool:
         """Indica si el archivo es nuevo (no existe en destino)."""
-        return self.existing_sha is None
+        return self.existing_sha is None and not self.is_deletion
 
 
 @dataclass

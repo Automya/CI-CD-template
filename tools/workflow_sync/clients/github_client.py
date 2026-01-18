@@ -101,8 +101,8 @@ class IGitHubClient(ABC):
         body: str,
         head: str,
         base: str,
-    ) -> str:
-        """Crea un PR y retorna la URL."""
+    ) -> tuple[str, int]:
+        """Crea un PR y retorna (URL, número del PR)."""
         pass
 
     @abstractmethod
@@ -115,6 +115,47 @@ class IGitHubClient(ABC):
     @abstractmethod
     def check_rate_limit(self, is_search: bool = False) -> None:
         """Verifica y maneja el rate limit."""
+        pass
+
+    @abstractmethod
+    def has_workflows_folder(self, repo: Repository, path: str) -> bool:
+        """Verifica si el repositorio tiene la carpeta de workflows."""
+        pass
+
+    @abstractmethod
+    def get_workflow_filenames(self, repo: Repository, path: str) -> list[str]:
+        """Obtiene la lista de nombres de archivos workflow en el repositorio."""
+        pass
+
+    @abstractmethod
+    def delete_file(
+        self,
+        repo: Repository,
+        path: str,
+        message: str,
+        branch: str,
+        sha: str,
+    ) -> None:
+        """Elimina un archivo del repositorio."""
+        pass
+
+    @abstractmethod
+    def merge_pull_request(
+        self,
+        repo: Repository,
+        pr_number: int,
+        merge_method: str = "squash",
+    ) -> bool:
+        """Mergea un PR. Retorna True si tuvo éxito."""
+        pass
+
+    @abstractmethod
+    def update_branch(
+        self,
+        repo: Repository,
+        pr_number: int,
+    ) -> bool:
+        """Actualiza el branch del PR con los cambios de base. Retorna True si tuvo éxito."""
         pass
 
 
@@ -311,8 +352,8 @@ class GitHubClient(IGitHubClient):
         body: str,
         head: str,
         base: str,
-    ) -> str:
-        """Crea un PR y retorna la URL."""
+    ) -> tuple[str, int]:
+        """Crea un PR y retorna (URL, número del PR)."""
         pr = self._api_call_with_retry(
             repo.create_pull,
             title=title,
@@ -321,7 +362,7 @@ class GitHubClient(IGitHubClient):
             base=base,
             operation_name="create_pull",
         )
-        return pr.html_url
+        return pr.html_url, pr.number
 
     def get_open_prs_with_prefix(
         self, repo: Repository, branch_prefix: str
@@ -388,6 +429,150 @@ class GitHubClient(IGitHubClient):
             if e.status == 404:
                 return False
             raise
+
+    def has_workflows_folder(self, repo: Repository, path: str) -> bool:
+        """Verifica si el repositorio tiene la carpeta de workflows."""
+        try:
+            self._api_call_with_retry(
+                repo.get_contents,
+                path,
+                operation_name=f"check_folder({path})",
+            )
+            return True
+        except GithubException as e:
+            if e.status == 404:
+                return False
+            raise
+
+    def get_workflow_filenames(self, repo: Repository, path: str) -> list[str]:
+        """Obtiene la lista de nombres de archivos workflow en el repositorio."""
+        filenames: list[str] = []
+        try:
+            contents = self._api_call_with_retry(
+                repo.get_contents,
+                path,
+                operation_name=f"list_workflows({path})",
+            )
+
+            if not isinstance(contents, list):
+                contents = [contents]
+
+            for content in contents:
+                if content.type == "file" and content.name.endswith((".yml", ".yaml")):
+                    filenames.append(content.name)
+
+            return filenames
+
+        except GithubException as e:
+            if e.status == 404:
+                return []
+            raise
+
+    def delete_file(
+        self,
+        repo: Repository,
+        path: str,
+        message: str,
+        branch: str,
+        sha: str,
+    ) -> None:
+        """Elimina un archivo del repositorio."""
+        self._api_call_with_retry(
+            repo.delete_file,
+            path=path,
+            message=message,
+            sha=sha,
+            branch=branch,
+            operation_name=f"delete_file({path})",
+        )
+
+    def merge_pull_request(
+        self,
+        repo: Repository,
+        pr_number: int,
+        merge_method: str = "squash",
+        max_retries: int = 3,
+    ) -> bool:
+        """Mergea un PR con retry y update branch si es necesario.
+
+        Si el merge falla porque el branch está desactualizado,
+        intenta actualizar el branch y reintentar el merge.
+        """
+        pr = repo.get_pull(pr_number)
+
+        for attempt in range(max_retries):
+            try:
+                # Verificar si es mergeable
+                if pr.mergeable is False:
+                    logger.warning(
+                        "PR #%d no es mergeable (posible conflicto)",
+                        pr_number,
+                    )
+                    return False
+
+                # Intentar merge
+                result = pr.merge(merge_method=merge_method)
+                return result.merged
+
+            except GithubException as e:
+                error_msg = self._extract_error(e).lower()
+
+                # Detectar si el branch está desactualizado
+                is_behind = any(word in error_msg for word in [
+                    "head branch was modified",
+                    "not up to date",
+                    "behind",
+                    "out-of-date",
+                ])
+
+                if is_behind and attempt < max_retries - 1:
+                    logger.info(
+                        "PR #%d está desactualizado, actualizando branch (intento %d/%d)",
+                        pr_number,
+                        attempt + 1,
+                        max_retries,
+                    )
+
+                    # Intentar actualizar branch
+                    if self.update_branch(repo, pr_number):
+                        # Esperar un momento y refrescar PR
+                        time.sleep(2)
+                        pr = repo.get_pull(pr_number)
+                        continue
+                    else:
+                        logger.warning("No se pudo actualizar el branch")
+                        return False
+                else:
+                    logger.warning(
+                        "No se pudo mergear PR #%d: %s",
+                        pr_number,
+                        self._extract_error(e),
+                    )
+                    return False
+
+        return False
+
+    def update_branch(
+        self,
+        repo: Repository,
+        pr_number: int,
+    ) -> bool:
+        """Actualiza el branch del PR con los cambios de base."""
+        try:
+            pr = repo.get_pull(pr_number)
+            # PyGithub usa update_branch para hacer el "Update branch" de GitHub
+            result = pr.update_branch()
+            if result:
+                logger.debug("Branch del PR #%d actualizado exitosamente", pr_number)
+                return True
+            return False
+        except GithubException as e:
+            logger.warning(
+                "No se pudo actualizar branch del PR #%d: %s",
+                pr_number,
+                self._extract_error(e),
+            )
+            return False
 
     def handle_post_operation_rate_limit(self) -> None:
         """Maneja el rate limit después de cada operación."""

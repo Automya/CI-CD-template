@@ -139,10 +139,22 @@ class PRBodyGenerator:
         org: str,
         source_repo: str,
         files_updated: list[str],
-        files_failed: list[str],
+        files_deleted: list[str] | None = None,
+        files_failed: list[str] | None = None,
     ) -> str:
         """Genera el cuerpo del PR."""
-        files_list = "\n".join([f"- `{f}`" for f in files_updated])
+        files_deleted = files_deleted or []
+        files_failed = files_failed or []
+
+        sections = []
+
+        if files_updated:
+            files_list = "\n".join([f"- `{f}`" for f in files_updated])
+            sections.append(f"### Archivos actualizados\n{files_list}")
+
+        if files_deleted:
+            deleted_list = "\n".join([f"- ~~`{f}`~~" for f in files_deleted])
+            sections.append(f"### Archivos eliminados\n{deleted_list}")
 
         partial_warning = ""
         if files_failed:
@@ -152,12 +164,13 @@ class PRBodyGenerator:
                 f"sincronizar: {failed_list}\n"
             )
 
+        changes_section = "\n\n".join(sections) if sections else "Sin cambios"
+
         return f"""## Sincronización de Workflows
 
 Este PR sincroniza los GitHub Actions workflows desde el repositorio fuente.
 
-### Archivos actualizados
-{files_list}
+{changes_section}
 {partial_warning}
 ### Repositorio fuente
 `{org}/{source_repo}`
@@ -386,6 +399,14 @@ class WorkflowSyncService:
                 message="Repositorio vacío (sin commits)",
             )
 
+        # Repo sin carpeta de workflows (no necesita sincronización)
+        if not self._client.has_workflows_folder(repo, self.WORKFLOWS_PATH):
+            return SyncResult(
+                repo_name=repo.name,
+                status=SyncStatus.SKIPPED,
+                message="Sin carpeta .github/workflows (no requiere workflows)",
+            )
+
         # PR existente (idempotencia)
         existing_prs = self._client.get_open_prs_with_prefix(repo, self.BRANCH_PREFIX)
         if existing_prs:
@@ -401,6 +422,11 @@ class WorkflowSyncService:
         """Obtiene los cambios necesarios para el repo."""
         changes: list[FileChange] = []
 
+        # Obtener archivos existentes en el destino
+        existing_files = self._client.get_workflow_filenames(repo, self.WORKFLOWS_PATH)
+        source_filenames = set(self._source_workflows.keys())
+
+        # Archivos a crear o actualizar
         for filename, new_content in self._source_workflows.items():
             file_path = f"{self.WORKFLOWS_PATH}/{filename}"
 
@@ -422,6 +448,26 @@ class WorkflowSyncService:
                         "Archivo %s necesita actualización en %s", filename, repo.name
                     )
 
+        # Archivos a eliminar (existen en destino pero no en fuente)
+        for existing_file in existing_files:
+            if existing_file not in source_filenames:
+                file_path = f"{self.WORKFLOWS_PATH}/{existing_file}"
+                result = self._client.get_file_content(repo, file_path)
+                if result:
+                    _, sha = result
+                    changes.append(
+                        FileChange(
+                            filename=existing_file,
+                            existing_sha=sha,
+                            is_deletion=True,
+                        )
+                    )
+                    logger.debug(
+                        "Archivo %s será eliminado en %s (no existe en fuente)",
+                        existing_file,
+                        repo.name,
+                    )
+
         return changes
 
     def _create_sync_pr(
@@ -430,6 +476,7 @@ class WorkflowSyncService:
         """Crea un PR con los cambios de workflows."""
         branch_name = None
         files_updated: list[str] = []
+        files_deleted: list[str] = []
         files_failed: list[str] = []
 
         try:
@@ -442,40 +489,56 @@ class WorkflowSyncService:
             for change in changes:
                 try:
                     file_path = f"{self.WORKFLOWS_PATH}/{change.filename}"
-                    message = (
-                        f"chore: {'sync' if change.existing_sha else 'add'} "
-                        f"workflow {change.filename}"
-                    )
 
-                    self._client.create_or_update_file(
-                        repo=repo,
-                        path=file_path,
-                        content=change.content,
-                        message=message,
-                        branch=branch_name,
-                        sha=change.existing_sha,
-                    )
-                    files_updated.append(change.filename)
-                    logger.debug(
-                        "Archivo %s actualizado en %s", change.filename, repo.name
-                    )
+                    if change.is_deletion:
+                        # Eliminar archivo
+                        message = f"chore: remove workflow {change.filename}"
+                        self._client.delete_file(
+                            repo=repo,
+                            path=file_path,
+                            message=message,
+                            branch=branch_name,
+                            sha=change.existing_sha,
+                        )
+                        files_deleted.append(change.filename)
+                        logger.debug(
+                            "Archivo %s eliminado en %s", change.filename, repo.name
+                        )
+                    else:
+                        # Crear o actualizar archivo
+                        message = (
+                            f"chore: {'sync' if change.existing_sha else 'add'} "
+                            f"workflow {change.filename}"
+                        )
+                        self._client.create_or_update_file(
+                            repo=repo,
+                            path=file_path,
+                            content=change.content,
+                            message=message,
+                            branch=branch_name,
+                            sha=change.existing_sha,
+                        )
+                        files_updated.append(change.filename)
+                        logger.debug(
+                            "Archivo %s actualizado en %s", change.filename, repo.name
+                        )
 
                 except Exception as e:
                     logger.error(
-                        "Error actualizando %s en %s: %s",
+                        "Error procesando %s en %s: %s",
                         change.filename,
                         repo.name,
                         str(e),
                     )
                     files_failed.append(change.filename)
 
-            # Si ningún archivo se actualizó, cleanup y error
-            if not files_updated:
+            # Si ningún archivo se procesó, cleanup y error
+            if not files_updated and not files_deleted:
                 self._client.delete_branch(repo, branch_name)
                 return SyncResult(
                     repo_name=repo.name,
                     status=SyncStatus.ERROR,
-                    message="Todas las actualizaciones fallaron",
+                    message="Todas las operaciones fallaron",
                     files_failed=files_failed,
                     branch_created=branch_name,
                 )
@@ -485,10 +548,11 @@ class WorkflowSyncService:
                 org=self._config.org,
                 source_repo=self._config.source_repo,
                 files_updated=files_updated,
+                files_deleted=files_deleted,
                 files_failed=files_failed,
             )
 
-            pr_url = self._client.create_pull_request(
+            pr_url, pr_number = self._client.create_pull_request(
                 repo=repo,
                 title="chore: sync GitHub Actions workflows",
                 body=pr_body,
@@ -496,14 +560,27 @@ class WorkflowSyncService:
                 base=repo.default_branch,
             )
 
+            # Auto-merge si está habilitado
+            merged = False
+            if self._config.auto_merge:
+                logger.debug("Auto-mergeando PR #%d en %s", pr_number, repo.name)
+                merged = self._client.merge_pull_request(repo, pr_number)
+                if merged:
+                    logger.debug("PR #%d mergeado exitosamente", pr_number)
+
+            all_files = files_updated + files_deleted
+            message = f"{len(files_updated)} actualizado(s), {len(files_deleted)} eliminado(s)"
+            if merged:
+                message += " [MERGEADO]"
+
             return SyncResult(
                 repo_name=repo.name,
                 status=SyncStatus.SUCCESS,
                 pr_url=pr_url,
-                message=f"{len(files_updated)} archivo(s) actualizados",
-                files_updated=files_updated,
+                message=message,
+                files_updated=all_files,
                 files_failed=files_failed,
-                branch_created=branch_name,
+                branch_created=branch_name if not merged else None,
             )
 
         except Exception as e:
