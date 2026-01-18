@@ -1,5 +1,5 @@
 name: "Docker Build & Push"
-description: "Builds and pushes a Docker image to a registry"
+description: "Builds and pushes a Docker image to a registry with optional layer caching"
 inputs:
   image_full_name:
     description: "Full image name including registry and tag"
@@ -12,79 +12,66 @@ inputs:
     description: "Build context path"
     required: false
     default: "."
+  cache_enabled:
+    description: "Enable Docker layer caching using BuildKit"
+    required: false
+    default: "false"
+  cache_image:
+    description: "Cache image reference. If empty, derives from image_full_name with :buildcache tag"
+    required: false
+    default: ""
 
 outputs:
   status:
-    description: "Result status (success, build_failed, push_failed)"
+    description: "Result status (success, build_failed)"
     value: ${{ steps.result.outputs.status }}
 
 runs:
   using: "composite"
   steps:
-    - name: Build
-      id: build
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Prepare Build Args
+      id: prepare
       shell: bash
       env:
-        IMAGE: ${{ inputs.image_full_name }}
         BUILD_ARGS: ${{ inputs.build_args }}
-        BUILD_CTX: ${{ inputs.context }}
-      run: |
-        echo "Building $IMAGE..."
-
-        # Build command array safely (no eval)
-        build_cmd=(docker build -t "$IMAGE")
-
-        # Add build args if provided
-        if [ -n "$BUILD_ARGS" ]; then
-          # Read args line by line, expanding env vars safely
-          while IFS= read -r arg || [ -n "$arg" ]; do
-            arg=$(echo "$arg" | xargs)  # trim whitespace
-            [ -z "$arg" ] && continue
-            # Expand environment variables using envsubst
-            expanded_arg=$(echo "$arg" | envsubst)
-            build_cmd+=($expanded_arg)
-          done <<< "$BUILD_ARGS"
-        fi
-
-        build_cmd+=("$BUILD_CTX")
-
-        echo "Running: ${build_cmd[*]}"
-        if "${build_cmd[@]}"; then
-          echo "status=build_success" >> "$GITHUB_OUTPUT"
-        else
-          echo "::error::Docker build failed"
-          echo "status=build_failed" >> "$GITHUB_OUTPUT"
-        fi
-
-    - name: Push
-      if: steps.build.outputs.status == 'build_success'
-      id: push
-      shell: bash
-      env:
         IMAGE: ${{ inputs.image_full_name }}
+        CACHE_IMAGE: ${{ inputs.cache_image }}
       run: |
-        echo "Pushing $IMAGE..."
-        if docker push "$IMAGE"; then
-          echo "status=push_success" >> "$GITHUB_OUTPUT"
-        else
-          echo "::error::Docker push failed"
-          echo "status=push_failed" >> "$GITHUB_OUTPUT"
+        # Convert build_args to KEY=value format (remove --build-arg prefix if present)
+        # and expand environment variables
+        CLEAN_ARGS=$(echo "$BUILD_ARGS" | sed 's/--build-arg //g' | envsubst)
+        echo "build_args<<EOF" >> "$GITHUB_OUTPUT"
+        echo "$CLEAN_ARGS" >> "$GITHUB_OUTPUT"
+        echo "EOF" >> "$GITHUB_OUTPUT"
+
+        # Derive cache image if not specified
+        if [ -z "$CACHE_IMAGE" ]; then
+          # Remove the tag from the image to use as cache base
+          CACHE_IMAGE="${IMAGE%:*}:buildcache"
         fi
+        echo "cache_image=$CACHE_IMAGE" >> "$GITHUB_OUTPUT"
+
+    - name: Build and Push
+      id: build-push
+      uses: docker/build-push-action@v6
+      with:
+        context: ${{ inputs.context }}
+        push: true
+        tags: ${{ inputs.image_full_name }}
+        build-args: ${{ steps.prepare.outputs.build_args }}
+        cache-from: ${{ inputs.cache_enabled == 'true' && format('type=registry,ref={0}', steps.prepare.outputs.cache_image) || '' }}
+        cache-to: ${{ inputs.cache_enabled == 'true' && format('type=registry,ref={0},mode=max', steps.prepare.outputs.cache_image) || '' }}
 
     - name: Set Final Status
       id: result
       if: always()
       shell: bash
-      env:
-        BUILD_STATUS: ${{ steps.build.outputs.status }}
-        PUSH_STATUS: ${{ steps.push.outputs.status }}
       run: |
-        if [ "$PUSH_STATUS" = "push_success" ]; then
+        if [ "${{ steps.build-push.outcome }}" = "success" ]; then
           echo "status=success" >> "$GITHUB_OUTPUT"
-        elif [ "$PUSH_STATUS" = "push_failed" ]; then
-          echo "status=push_failed" >> "$GITHUB_OUTPUT"
-        elif [ "$BUILD_STATUS" = "build_failed" ]; then
-          echo "status=build_failed" >> "$GITHUB_OUTPUT"
         else
-          echo "status=unknown" >> "$GITHUB_OUTPUT"
+          echo "status=build_failed" >> "$GITHUB_OUTPUT"
         fi

@@ -19,6 +19,10 @@ inputs:
   google_chat_webhook:
     description: "Google Chat Webhook URL for notifications"
     required: false
+  cache_enabled:
+    description: "Enable Docker layer caching (uses GCP Artifact Registry)"
+    required: false
+    default: "false"
 
 runs:
   using: "composite"
@@ -29,3 +33,4 @@ runs:
         workload_identity_provider: ${{ inputs.workload_identity_provider }}
         service_account: ${{ inputs.service_account }}
         google_chat_webhook: ${{ inputs.google_chat_webhook }}
+        cache_enabled: ${{ inputs.cache_enabled }}

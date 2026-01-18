@@ -31,6 +31,10 @@ inputs:
   google_chat_webhook:
     description: "Google Chat Webhook URL for notifications"
     required: false
+  cache_enabled:
+    description: "Enable Docker layer caching (uses GCP Artifact Registry)"
+    required: false
+    default: "false"
 
 runs:
   using: "composite"
@@ -45,6 +49,7 @@ runs:
         gitops_token: ${{ inputs.gitops_token }}
         container_name: ${{ inputs.container_name }}
         google_chat_webhook: ${{ inputs.google_chat_webhook }}
+        cache_enabled: ${{ inputs.cache_enabled }}
         allowed_tags: "DEV,dev"
         build_args: |
           --build-arg MAVEN_USERNAME="${MAVEN_USERNAME}"

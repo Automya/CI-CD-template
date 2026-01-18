@@ -47,6 +47,12 @@ inputs:
     description: "Google Chat Webhook URL for notifications"
     required: false
 
+  # Cache Configuration
+  cache_enabled:
+    description: "Enable Docker layer caching (uses GCP Artifact Registry)"
+    required: false
+    default: "false"
+
 runs:
   using: "composite"
   steps:
@@ -104,6 +110,7 @@ runs:
       with:
         image_full_name: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ steps.ctx.outputs.tag }}
         build_args: ${{ inputs.build_args }}
+        cache_enabled: ${{ inputs.cache_enabled }}
 
     - name: GitOps Update (Release only)
       if: github.event_name == 'release' && steps.build.outputs.status == 'success' && inputs.gitops_repo != ''
