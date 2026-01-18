@@ -52,7 +52,7 @@ runs:
         cache_enabled: ${{ inputs.cache_enabled }}
         allowed_tags: "DEV,dev"
         build_args: |
-          --build-arg MAVEN_USERNAME="${MAVEN_USERNAME}"
-          --build-arg MAVEN_PASSWORD="${MAVEN_PASSWORD}"
-          --build-arg MAVEN_USERNAME2="${MAVEN_USERNAME2}"
-          --build-arg MAVEN_PASSWORD2="${MAVEN_PASSWORD2}"
+          MAVEN_USERNAME=${{ env.MAVEN_USERNAME }}
+          MAVEN_PASSWORD=${{ env.MAVEN_PASSWORD }}
+          MAVEN_USERNAME2=${{ env.MAVEN_USERNAME2 }}
+          MAVEN_PASSWORD2=${{ env.MAVEN_PASSWORD2 }}
