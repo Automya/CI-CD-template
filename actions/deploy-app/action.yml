@@ -1,7 +1,14 @@
 name: Deploy GitOps Image
-description: >
+description: |
   Updates image tag in GitOps repo (staging or prod) via command `deploy -t <tag> -e <env>`
   from PR or issue comments. Creates automatic PR in GitOps repository.
+
+  REQUIRED WORKFLOW PERMISSIONS for issue_comment trigger:
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      id-token: write
 inputs:
   gitops_repo:
     description: 'Repo GitOps destino en formato owner/repo o URL (ej: Automya/gitops).'

@@ -51,8 +51,12 @@ runs:
           http_code="${response: -3}"
           if [ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]; then
             echo "PR comment posted successfully"
+          elif [ "$http_code" == "403" ]; then
+            echo "::warning::Failed to post comment (HTTP 403 Forbidden). Ensure workflow has 'issues: write' and 'pull-requests: write' permissions."
+          elif [ "$http_code" == "404" ]; then
+            echo "::warning::Failed to post comment (HTTP 404). Issue/PR #$PR_NUMBER not found in $REPO."
           else
-            echo "::warning::Failed to post PR comment (HTTP $http_code)"
+            echo "::warning::Failed to post comment (HTTP $http_code)"
           fi
         fi
 
