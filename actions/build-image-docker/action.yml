@@ -1,5 +1,14 @@
 name: "GCP Docker Build & Push"
-description: "Builds and pushes Docker images to GCP Artifact Registry with optional GitOps integration. Supports PR comments and issue comments (use 'build -b <branch>' for issues)."
+description: |
+  Builds and pushes Docker images to GCP Artifact Registry with optional GitOps integration.
+  Supports PR comments and issue comments (use 'build -b <branch>' for issues).
+
+  REQUIRED WORKFLOW PERMISSIONS for issue_comment trigger:
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      id-token: write
 inputs:
   # GCP Configuration (required - no defaults for security)
   workload_identity_provider:
