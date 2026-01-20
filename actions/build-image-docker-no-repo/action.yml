@@ -24,6 +24,20 @@ inputs:
     required: false
     default: "false"
 
+  # GitOps Configuration (optional - for semantic versioning releases to production)
+  gitops_repo:
+    description: "GitOps repository name (e.g., 'Automya/gitops')"
+    required: false
+  prod_manifest_path:
+    description: "Path to production manifest in GitOps repo"
+    required: false
+  gitops_token:
+    description: "GitHub token with access to GitOps repository"
+    required: false
+  container_name:
+    description: "Container name in Kubernetes deployment"
+    required: false
+
 runs:
   using: "composite"
   steps:
@@ -34,3 +48,7 @@ runs:
         service_account: ${{ inputs.service_account }}
         google_chat_webhook: ${{ inputs.google_chat_webhook }}
         cache_enabled: ${{ inputs.cache_enabled }}
+        gitops_repo: ${{ inputs.gitops_repo }}
+        prod_manifest_path: ${{ inputs.prod_manifest_path }}
+        gitops_token: ${{ inputs.gitops_token }}
+        container_name: ${{ inputs.container_name }}
