@@ -400,6 +400,24 @@ runs:
 
                 return images
 
+            def sanitize_filename(self, filename: str) -> str:
+                """Sanitize filename for Confluence (remove spaces, special chars)"""
+                import re
+
+                # Split filename and extension
+                parts = filename.rsplit('.', 1)
+                name = parts[0]
+                ext = parts[1] if len(parts) > 1 else ''
+
+                # Replace spaces, commas, and special chars with hyphens
+                name = re.sub(r'[^\w\-]', '-', name)
+                # Remove multiple consecutive hyphens
+                name = re.sub(r'-+', '-', name)
+                # Remove leading/trailing hyphens
+                name = name.strip('-')
+
+                return f"{name}.{ext}" if ext else name
+
             def upload_attachment(self, page_id: str, file_path: Path) -> Optional[str]:
                 """Upload an image as attachment to a Confluence page"""
                 try:
@@ -407,17 +425,23 @@ runs:
                         print(f"  Warning: Image not found: {file_path}")
                         return None
 
+                    # Sanitize filename for Confluence (spaces and special chars cause 415 errors)
+                    original_filename = file_path.name
+                    sanitized_filename = self.sanitize_filename(original_filename)
+
+                    if original_filename != sanitized_filename:
+                        print(f"    Sanitized filename: {original_filename} -> {sanitized_filename}")
+
                     # Check if attachment already exists
-                    filename = file_path.name
                     check_response = self.session.get(
                         f'{CONFLUENCE_URL}/rest/api/content/{page_id}/child/attachment',
-                        params={'filename': filename},
+                        params={'filename': sanitized_filename},
                         timeout=30
                     )
 
                     # Prepare file for upload
                     with open(file_path, 'rb') as f:
-                        files = {'file': (filename, f, self._get_mime_type(file_path))}
+                        files = {'file': (sanitized_filename, f, self._get_mime_type(file_path))}
 
                         # Remove Content-Type header for multipart upload
                         headers = {k: v for k, v in self.session.headers.items() if k.lower() != 'content-type'}
@@ -443,10 +467,10 @@ runs:
                             )
 
                     if response.status_code in (200, 201):
-                        print(f"  ✓ Uploaded image: {filename}")
-                        return filename
+                        print(f"  ✓ Uploaded image: {sanitized_filename}")
+                        return sanitized_filename
                     else:
-                        print(f"  ✗ Failed to upload {filename}: {response.status_code}")
+                        print(f"  ✗ Failed to upload {sanitized_filename}: {response.status_code}")
                         return None
 
                 except Exception as e:
@@ -476,14 +500,17 @@ runs:
 
                 for img in images:
                     original_path = img['path']
-                    filename = img['filename']
+                    original_filename = img['filename']
 
-                    # Check if image was successfully uploaded
-                    if filename not in uploaded_filenames:
+                    # Check if image was successfully uploaded (maps original -> sanitized)
+                    if original_filename not in uploaded_filenames:
                         continue
 
+                    # Get the sanitized filename that was actually uploaded
+                    sanitized_filename = uploaded_filenames[original_filename]
+
                     # Confluence attachment reference format (must be inside ac:image tags)
-                    attachment_ref = f'<ri:attachment ri:filename="{filename}" />'
+                    attachment_ref = f'<ri:attachment ri:filename="{sanitized_filename}" />'
 
                     # Try multiple variations of the path to catch all encodings
                     path_variations = [
@@ -521,9 +548,9 @@ runs:
                         replacement4 = f'<ac:image>{attachment_ref}</ac:image>'
                         updated_html = re.sub(pattern4, replacement4, updated_html, flags=re.IGNORECASE)
 
-                    # Fallback: Search for any ri:url that contains the filename
+                    # Fallback: Search for any ri:url that contains the original filename
                     # This catches cases where the path was heavily transformed
-                    filename_pattern = f'(<ac:image[^>]*>)?\\s*<ri:url[^>]*ri:value="[^"]*{re.escape(filename)}"[^>]*/>(\\s*</ac:image>)?'
+                    filename_pattern = f'(<ac:image[^>]*>)?\\s*<ri:url[^>]*ri:value="[^"]*{re.escape(original_filename)}"[^>]*/>(\\s*</ac:image>)?'
                     replacement = f'<ac:image>{attachment_ref}</ac:image>'
                     updated_html = re.sub(filename_pattern, replacement, updated_html, flags=re.IGNORECASE)
 
@@ -793,14 +820,16 @@ runs:
                     # Upload images as attachments and update references
                     if images and page_id:
                         print(f"  Uploading {len(images)} image(s)...")
-                        uploaded_filenames = {}
+                        uploaded_filenames = {}  # Maps original filename -> sanitized filename
 
                         for img in images:
                             img_path = img['absolute_path']
+                            original_filename = img_path.name
                             print(f"    - Image path: {img['path']} -> {img_path}")
-                            filename = self.upload_attachment(page_id, img_path)
-                            if filename:
-                                uploaded_filenames[filename] = True
+                            sanitized_filename = self.upload_attachment(page_id, img_path)
+                            if sanitized_filename:
+                                # Map original filename to sanitized filename
+                                uploaded_filenames[original_filename] = sanitized_filename
 
                         # Update page content with correct attachment references
                         if uploaded_filenames:
