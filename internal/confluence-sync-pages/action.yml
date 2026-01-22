@@ -756,8 +756,43 @@ runs:
 
                 return False
 
+            def create_folder_page(self, title: str, parent_id: str) -> Optional[str]:
+                """Create a simple page to act as a folder (no API v2 needed)"""
+                try:
+                    # Create empty page that acts as folder
+                    payload = {
+                        'type': 'page',
+                        'title': title,
+                        'space': {'key': SPACE_KEY},
+                        'ancestors': [{'id': parent_id}],
+                        'body': {
+                            'storage': {
+                                'value': f'<p><em>Folder: {title}</em></p>',
+                                'representation': 'storage'
+                            }
+                        }
+                    }
+
+                    response = self.session.post(
+                        f'{CONFLUENCE_URL}/rest/api/content',
+                        json=payload,
+                        timeout=30
+                    )
+
+                    if response.status_code in (200, 201):
+                        page_id = response.json()['id']
+                        print(f"  ✓ Created folder page: {title} (ID: {page_id})")
+                        return page_id
+                    else:
+                        print(f"  ✗ Failed to create folder page '{title}': {response.status_code}")
+                        return None
+
+                except Exception as e:
+                    print(f"  ✗ Error creating folder page '{title}': {e}")
+                    return None
+
             def get_parent_folder_for_file(self, file_path: Path, root_parent_id: str) -> Optional[str]:
-                """Get or create parent folder for a file based on its path"""
+                """Get or create parent folder pages for a file based on its path"""
                 docs_path = Path(DOCS_FOLDER if DOCS_FOLDER not in ('.', '', './') else '.')
 
                 try:
@@ -772,16 +807,27 @@ runs:
                 if str(parent_folder) == '.':
                     return root_parent_id
 
-                # Build folder hierarchy
+                # Build folder hierarchy (using pages, not folders)
                 current_parent_id = root_parent_id
                 for folder_part in parent_folder.parts:
-                    folder_path = docs_path / Path(*parent_folder.parts[:parent_folder.parts.index(folder_part) + 1])
-                    folder_id = self.ensure_folder_exists(folder_path, current_parent_id)
+                    # Format folder name nicely
+                    folder_title = folder_part.replace('_', ' ').replace('-', ' ').title()
+
+                    # Check cache first
+                    cache_key = f"{current_parent_id}_{folder_title}"
+                    if cache_key in self.folder_cache:
+                        current_parent_id = self.folder_cache[cache_key]
+                        continue
+
+                    # Create folder page
+                    folder_id = self.create_folder_page(folder_title, current_parent_id)
 
                     if not folder_id:
-                        print(f"  Warning: Could not create folder for {folder_path}")
+                        print(f"  Warning: Could not create folder page for {folder_part}")
                         return root_parent_id
 
+                    # Cache it
+                    self.folder_cache[cache_key] = folder_id
                     current_parent_id = folder_id
 
                 return current_parent_id
@@ -813,21 +859,13 @@ runs:
                     source_comment = f'<!-- Synced from: {file_path} -->\n'
                     confluence_content = source_comment + confluence_content
 
-                    # Check if page exists
-                    page_id = self.find_page_by_title(SPACE_KEY, title, parent_id)
+                    # Always create new page (we deleted everything before syncing)
+                    page_id = self.create_page(SPACE_KEY, title, confluence_content, parent_id)
 
-                    if page_id:
-                        # Update existing page
-                        success = self.update_page(page_id, title, confluence_content)
-                    else:
-                        # Create new page
-                        page_id = self.create_page(SPACE_KEY, title, confluence_content, parent_id)
-                        success = page_id is not None
-
-                    if not success:
+                    if not page_id:
                         failed_pages.append({
                             'file': str(file_path),
-                            'error': 'Failed to create/update page'
+                            'error': 'Failed to create page'
                         })
                         return False
 
@@ -890,24 +928,59 @@ runs:
 
                     return False
 
+            def delete_all_children(self, parent_id: str):
+                """Delete all child pages of a parent page/folder"""
+                try:
+                    print(f"\n🗑️  Deleting all existing content under parent {parent_id}...")
+
+                    # Get all child pages
+                    response = self.session.get(
+                        f'{CONFLUENCE_URL}/rest/api/content/{parent_id}/child/page',
+                        params={'limit': 500},
+                        timeout=30
+                    )
+
+                    if response.status_code != 200:
+                        print(f"  Warning: Could not retrieve children: {response.status_code}")
+                        return
+
+                    children = response.json().get('results', [])
+                    print(f"  Found {len(children)} child pages to delete")
+
+                    deleted_count = 0
+                    for child in children:
+                        child_id = child['id']
+                        child_title = child.get('title', 'Unknown')
+
+                        # Delete the child page
+                        delete_response = self.session.delete(
+                            f'{CONFLUENCE_URL}/rest/api/content/{child_id}',
+                            timeout=30
+                        )
+
+                        if delete_response.status_code in (200, 204):
+                            print(f"  ✓ Deleted: {child_title}")
+                            deleted_count += 1
+                        else:
+                            print(f"  ✗ Failed to delete {child_title}: {delete_response.status_code}")
+
+                    print(f"  Successfully deleted {deleted_count}/{len(children)} pages")
+
+                except Exception as e:
+                    print(f"  Error deleting children: {e}")
+                    import traceback
+                    traceback.print_exc()
+
             def sync_folder(self, folder_path: Path, parent_id: str):
-                """Sync all Markdown files in a folder, creating Confluence folders as needed"""
+                """Sync all Markdown files in a folder, deleting existing content first"""
                 print(f"\n=== Confluence Documentation Sync ===")
                 print(f"Mode: {SYNC_MODE}")
                 print(f"Docs folder: {DOCS_FOLDER}")
                 print(f"Space: {SPACE_KEY}")
                 print(f"Parent folder/page ID: {parent_id}")
 
-                # Process deleted files first
-                if DELETED_FILES:
-                    print(f"\n--- Processing Deleted Files ---")
-                    for deleted_file in DELETED_FILES:
-                        if deleted_file:
-                            file_path = Path(deleted_file)
-                            # Note: File no longer exists, so we need to reconstruct info
-                            # For now, just log it - full deprecation would need a mapping file
-                            print(f"  Note: File deleted: {deleted_file}")
-                            print(f"  To mark as deprecated, page must be found by title pattern")
+                # Delete all existing content first (clean slate approach)
+                self.delete_all_children(parent_id)
 
                 # Get files to sync
                 if SYNC_MODE == 'changed' and CHANGED_FILES:
