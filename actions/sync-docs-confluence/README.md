@@ -185,18 +185,34 @@ title: Mi Título Personalizado
 
 Sin frontmatter, el título se genera automáticamente desde el nombre del archivo.
 
-### Jerarquía de Carpetas
+### Organización por Carpetas
 
-La estructura de carpetas se preserva como jerarquía de páginas:
+Las carpetas de GitHub se representan como **prefijos en los títulos** de las páginas en Confluence. Todas las páginas se crean directamente dentro del folder/página padre de Confluence.
 
+**Estructura en GitHub:**
 ```
 docs/
-  ├── index.md              → Página "Index" (nivel 1)
-  ├── getting-started.md    → Página "Getting Started" (nivel 1)
-  └── guides/               → Página "Guides" (nivel 1, auto-creada)
-      ├── installation.md   → Página "Installation" (nivel 2, hijo de "Guides")
-      └── configuration.md  → Página "Configuration" (nivel 2, hijo de "Guides")
+  ├── index.md
+  ├── getting-started.md
+  └── guides/
+      ├── installation.md
+      └── configuration.md
 ```
+
+**Páginas creadas en Confluence:**
+```
+Parent Folder (ID: confluence_parent_page_id)
+  ├── "Index"                        (docs/index.md)
+  ├── "Getting Started"              (docs/getting-started.md)
+  ├── "Guides / Installation"        (docs/guides/installation.md)
+  └── "Guides / Configuration"       (docs/guides/configuration.md)
+```
+
+**Ventajas de este enfoque:**
+- ✅ Todas las páginas en un solo nivel dentro del folder de Confluence
+- ✅ Fácil navegación y búsqueda en Confluence
+- ✅ Los títulos con prefijos mantienen la organización visible
+- ✅ No se crean páginas vacías para carpetas
 
 ### Sincronizar desde la Raíz del Repositorio
 
