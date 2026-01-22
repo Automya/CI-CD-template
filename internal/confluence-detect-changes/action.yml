@@ -1,0 +1,67 @@
+name: "Detect Documentation Changes"
+description: "Detects which Markdown files have been changed or deleted between commits"
+
+inputs:
+  docs_folder:
+    description: "Path to documentation folder"
+    required: true
+  base_ref:
+    description: "Base git reference for comparison (e.g., HEAD~1)"
+    required: true
+  head_ref:
+    description: "Head git reference (e.g., HEAD or commit SHA)"
+    required: true
+
+outputs:
+  changed_files:
+    description: "Space-separated list of changed .md files"
+    value: ${{ steps.detect.outputs.changed_files }}
+  deleted_files:
+    description: "Space-separated list of deleted .md files"
+    value: ${{ steps.detect.outputs.deleted_files }}
+  has_changes:
+    description: "Boolean indicating if any changes were detected"
+    value: ${{ steps.detect.outputs.has_changes }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Detect Changes
+      id: detect
+      shell: bash
+      env:
+        DOCS_FOLDER: ${{ inputs.docs_folder }}
+        BASE_REF: ${{ inputs.base_ref }}
+        HEAD_REF: ${{ inputs.head_ref }}
+      run: |
+        set -euo pipefail
+
+        echo "Detecting changes in documentation folder: $DOCS_FOLDER"
+        echo "Comparing $BASE_REF vs $HEAD_REF"
+
+        # Get changed files (Added, Changed, Modified, Renamed)
+        # Using --diff-filter=ACMR to include only additions, changes, modifications, and renames
+        CHANGED=$(git diff --name-only --diff-filter=ACMR "$BASE_REF" "$HEAD_REF" -- "${DOCS_FOLDER}/**/*.md" 2>/dev/null | tr '\n' ' ' || echo "")
+
+        # Get deleted files
+        # Using --diff-filter=D to include only deletions
+        DELETED=$(git diff --name-only --diff-filter=D "$BASE_REF" "$HEAD_REF" -- "${DOCS_FOLDER}/**/*.md" 2>/dev/null | tr '\n' ' ' || echo "")
+
+        # Set outputs
+        echo "changed_files=$CHANGED" >> "$GITHUB_OUTPUT"
+        echo "deleted_files=$DELETED" >> "$GITHUB_OUTPUT"
+
+        # Determine if there are any changes
+        if [ -n "$CHANGED" ] || [ -n "$DELETED" ]; then
+          echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          echo "✓ Changes detected:"
+          if [ -n "$CHANGED" ]; then
+            echo "  Changed/Added files: $CHANGED"
+          fi
+          if [ -n "$DELETED" ]; then
+            echo "  Deleted files: $DELETED"
+          fi
+        else
+          echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          echo "✓ No changes detected in documentation files"
+        fi

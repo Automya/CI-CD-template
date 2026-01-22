@@ -1,0 +1,123 @@
+name: Sync Documentation to Confluence
+description: |
+  Syncs Markdown documentation from a GitHub repository to Confluence Cloud.
+  Automatically triggered on push to docs folder, preserves folder hierarchy,
+  and marks deleted files as deprecated.
+
+inputs:
+  # Confluence Configuration (REQUIRED)
+  confluence_url:
+    description: 'Confluence Cloud URL (e.g., https://yourorg.atlassian.net/wiki)'
+    required: true
+  confluence_username:
+    description: 'Confluence username (email address)'
+    required: true
+  confluence_api_token:
+    description: 'Confluence API token (generate from account settings)'
+    required: true
+  confluence_space_key:
+    description: 'Confluence space key where pages will be created'
+    required: true
+  confluence_parent_page_id:
+    description: 'Parent page ID under which all docs will be created'
+    required: true
+
+  # Source Configuration
+  docs_folder:
+    description: 'Path to documentation folder in repository'
+    required: false
+    default: 'docs'
+
+  # Sync Behavior
+  sync_mode:
+    description: 'Sync mode: "all" (sync entire folder) or "changed" (only changed files)'
+    required: false
+    default: 'changed'
+
+  # Advanced Options
+  page_title_from_frontmatter:
+    description: 'Extract page title from YAML frontmatter instead of filename'
+    required: false
+    default: 'true'
+
+outputs:
+  synced_pages:
+    description: 'Number of pages successfully synced'
+    value: ${{ steps.sync.outputs.synced_pages }}
+  failed_pages:
+    description: 'Number of pages that failed to sync'
+    value: ${{ steps.sync.outputs.failed_pages }}
+  confluence_urls:
+    description: 'JSON array of synced page URLs'
+    value: ${{ steps.sync.outputs.confluence_urls }}
+
+runs:
+  using: composite
+  steps:
+    # 1. Initialize context (create error file, set env vars)
+    - name: Initialize Context
+      uses: Automya/CI-CD-template/internal/confluence-context-init@main
+
+    # 2. Checkout repository with fetch-depth: 2 for change detection
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 2
+
+    # 3. Setup Python 3.11 with pip cache
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+        cache-dependency-path: |
+          **/requirements*.txt
+          **/pyproject.toml
+
+    # 4. Install Python dependencies
+    - name: Install Dependencies
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "Installing Python dependencies for Confluence sync..."
+        pip install --quiet --upgrade pip
+        pip install --quiet md2cf PyYAML requests
+
+    # 5. Detect changed files (compare HEAD vs HEAD~1)
+    - name: Detect Changes
+      id: changes
+      uses: Automya/CI-CD-template/internal/confluence-detect-changes@main
+      with:
+        docs_folder: ${{ inputs.docs_folder }}
+        base_ref: ${{ github.event.before || 'HEAD~1' }}
+        head_ref: ${{ github.sha }}
+
+    # 6. Execute core sync logic
+    - name: Sync to Confluence
+      id: sync
+      if: ${{ steps.changes.outputs.has_changes == 'true' || inputs.sync_mode == 'all' }}
+      uses: Automya/CI-CD-template/internal/confluence-sync-pages@main
+      with:
+        confluence_url: ${{ inputs.confluence_url }}
+        confluence_username: ${{ inputs.confluence_username }}
+        confluence_api_token: ${{ inputs.confluence_api_token }}
+        space_key: ${{ inputs.confluence_space_key }}
+        parent_page_id: ${{ inputs.confluence_parent_page_id }}
+        docs_folder: ${{ inputs.docs_folder }}
+        sync_mode: ${{ inputs.sync_mode }}
+        changed_files: ${{ steps.changes.outputs.changed_files }}
+        deleted_files: ${{ steps.changes.outputs.deleted_files }}
+        page_title_from_frontmatter: ${{ inputs.page_title_from_frontmatter }}
+
+    # 7. Generate report with synced/failed counts
+    - name: Generate Report
+      if: always()
+      id: report
+      uses: Automya/CI-CD-template/internal/confluence-report@main
+      with:
+        job_status: ${{ job.status }}
+        synced_pages: ${{ steps.sync.outputs.synced_pages || '0' }}
+        failed_pages: ${{ steps.sync.outputs.failed_pages || '0' }}
+        confluence_urls: ${{ steps.sync.outputs.confluence_urls || '[]' }}
+        error_file_path: ${{ github.workspace }}/action_error.txt
+        has_changes: ${{ steps.changes.outputs.has_changes }}

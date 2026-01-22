@@ -1,0 +1,564 @@
+name: "Sync Pages to Confluence"
+description: "Core sync logic: converts Markdown to Confluence pages using md2cf"
+
+inputs:
+  confluence_url:
+    description: "Confluence URL"
+    required: true
+  confluence_username:
+    description: "Confluence username"
+    required: true
+  confluence_api_token:
+    description: "Confluence API token"
+    required: true
+  space_key:
+    description: "Confluence space key"
+    required: true
+  parent_page_id:
+    description: "Parent page ID"
+    required: true
+  docs_folder:
+    description: "Documentation folder path"
+    required: true
+  sync_mode:
+    description: "Sync mode (all/changed)"
+    required: false
+    default: "changed"
+  changed_files:
+    description: "Space-separated list of changed files"
+    required: false
+    default: ""
+  deleted_files:
+    description: "Space-separated list of deleted files"
+    required: false
+    default: ""
+  page_title_from_frontmatter:
+    description: "Extract title from frontmatter"
+    required: false
+    default: "true"
+
+outputs:
+  synced_pages:
+    description: "Number of synced pages"
+    value: ${{ steps.sync.outputs.synced_pages }}
+  failed_pages:
+    description: "Number of failed pages"
+    value: ${{ steps.sync.outputs.failed_pages }}
+  confluence_urls:
+    description: "JSON array of synced page URLs"
+    value: ${{ steps.sync.outputs.confluence_urls }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Execute Sync
+      id: sync
+      shell: bash
+      env:
+        CONFLUENCE_URL: ${{ inputs.confluence_url }}
+        CONFLUENCE_USERNAME: ${{ inputs.confluence_username }}
+        CONFLUENCE_API_TOKEN: ${{ inputs.confluence_api_token }}
+        SPACE_KEY: ${{ inputs.space_key }}
+        PARENT_PAGE_ID: ${{ inputs.parent_page_id }}
+        DOCS_FOLDER: ${{ inputs.docs_folder }}
+        SYNC_MODE: ${{ inputs.sync_mode }}
+        CHANGED_FILES: ${{ inputs.changed_files }}
+        DELETED_FILES: ${{ inputs.deleted_files }}
+        TITLE_FROM_FRONTMATTER: ${{ inputs.page_title_from_frontmatter }}
+      run: |
+        set -euo pipefail
+
+        # Create inline Python script for Confluence sync
+        python3 << 'PYTHON_SCRIPT_END'
+        #!/usr/bin/env python3
+        """
+        Confluence Documentation Sync Script
+        Syncs Markdown files to Confluence using md2cf library
+        """
+        import os
+        import sys
+        import json
+        import yaml
+        import requests
+        from pathlib import Path
+        from typing import Dict, List, Optional, Tuple
+        from md2cf.confluence_renderer import ConfluenceRenderer
+        import mistune
+
+        # Configuration from environment
+        CONFLUENCE_URL = os.environ['CONFLUENCE_URL'].rstrip('/')
+        USERNAME = os.environ['CONFLUENCE_USERNAME']
+        API_TOKEN = os.environ['CONFLUENCE_API_TOKEN']
+        SPACE_KEY = os.environ['SPACE_KEY']
+        PARENT_PAGE_ID = os.environ['PARENT_PAGE_ID']
+        DOCS_FOLDER = os.environ['DOCS_FOLDER']
+        SYNC_MODE = os.environ.get('SYNC_MODE', 'changed')
+        CHANGED_FILES = os.environ.get('CHANGED_FILES', '').split()
+        DELETED_FILES = os.environ.get('DELETED_FILES', '').split()
+        TITLE_FROM_FRONTMATTER = os.environ.get('TITLE_FROM_FRONTMATTER', 'true').lower() == 'true'
+        ERROR_FILE = os.environ.get('GITHUB_WORKSPACE', '.') + '/action_error.txt'
+        GITHUB_OUTPUT = os.environ.get('GITHUB_OUTPUT', '')
+
+        # State tracking
+        synced_pages = []
+        failed_pages = []
+
+        class ConfluenceSync:
+            def __init__(self):
+                self.session = requests.Session()
+                self.session.auth = (USERNAME, API_TOKEN)
+                self.session.headers.update({
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                })
+                self.page_cache = {}  # title -> page_id mapping
+                self.folder_pages = {}  # folder_path -> page_id mapping
+
+            def find_page_by_title(self, space_key: str, title: str, parent_id: Optional[str] = None) -> Optional[str]:
+                """Find page ID by title in space using CQL query"""
+                try:
+                    # Build CQL query
+                    cql = f'space = "{space_key}" AND title = "{title}"'
+                    if parent_id:
+                        cql += f' AND parent = {parent_id}'
+
+                    response = self.session.get(
+                        f'{CONFLUENCE_URL}/rest/api/content/search',
+                        params={'cql': cql, 'limit': 1},
+                        timeout=30
+                    )
+
+                    if response.status_code == 200:
+                        results = response.json().get('results', [])
+                        if results:
+                            page_id = results[0]['id']
+                            print(f"  Found existing page: {title} (ID: {page_id})")
+                            return page_id
+                    return None
+                except Exception as e:
+                    print(f"  Warning: Error searching for page '{title}': {e}")
+                    return None
+
+            def get_page_version(self, page_id: str) -> int:
+                """Get current version of a page"""
+                try:
+                    response = self.session.get(
+                        f'{CONFLUENCE_URL}/rest/api/content/{page_id}',
+                        params={'expand': 'version'},
+                        timeout=30
+                    )
+                    if response.status_code == 200:
+                        return response.json()['version']['number']
+                    return 1
+                except Exception as e:
+                    print(f"  Warning: Error getting page version: {e}")
+                    return 1
+
+            def extract_frontmatter(self, content: str) -> Tuple[Dict, str]:
+                """Extract YAML frontmatter from Markdown content"""
+                if not content.startswith('---'):
+                    return {}, content
+
+                try:
+                    parts = content.split('---', 2)
+                    if len(parts) >= 3:
+                        frontmatter = yaml.safe_load(parts[1])
+                        markdown_content = parts[2].strip()
+                        return frontmatter or {}, markdown_content
+                except Exception as e:
+                    print(f"  Warning: Failed to parse frontmatter: {e}")
+
+                return {}, content
+
+            def get_page_title(self, file_path: Path, content: str) -> str:
+                """Extract page title from frontmatter or filename"""
+                if TITLE_FROM_FRONTMATTER:
+                    frontmatter, _ = self.extract_frontmatter(content)
+                    if 'title' in frontmatter:
+                        return frontmatter['title']
+
+                # Fallback to filename without extension, replacing _ and - with spaces
+                return file_path.stem.replace('_', ' ').replace('-', ' ').title()
+
+            def markdown_to_confluence(self, markdown_content: str) -> str:
+                """Convert Markdown to Confluence Storage Format"""
+                # Remove frontmatter if present
+                _, clean_markdown = self.extract_frontmatter(markdown_content)
+
+                # Use md2cf's ConfluenceRenderer
+                renderer = ConfluenceRenderer()
+                md = mistune.Markdown(renderer=renderer)
+                confluence_html = md(clean_markdown)
+
+                return confluence_html
+
+            def create_page(self, space_key: str, title: str, body: str, parent_id: str) -> Optional[str]:
+                """Create a new Confluence page"""
+                try:
+                    payload = {
+                        'type': 'page',
+                        'title': title,
+                        'space': {'key': space_key},
+                        'body': {
+                            'storage': {
+                                'value': body,
+                                'representation': 'storage'
+                            }
+                        },
+                        'ancestors': [{'id': parent_id}]
+                    }
+
+                    response = self.session.post(
+                        f'{CONFLUENCE_URL}/rest/api/content',
+                        json=payload,
+                        timeout=30
+                    )
+
+                    if response.status_code == 200:
+                        page_id = response.json()['id']
+                        print(f"  ✓ Created page: {title} (ID: {page_id})")
+                        return page_id
+                    else:
+                        error_msg = response.json().get('message', response.text)
+                        print(f"  ✗ Failed to create page: {error_msg}")
+                        return None
+
+                except Exception as e:
+                    print(f"  ✗ Error creating page: {e}")
+                    return None
+
+            def update_page(self, page_id: str, title: str, body: str) -> bool:
+                """Update an existing Confluence page"""
+                try:
+                    # Get current version
+                    current_version = self.get_page_version(page_id)
+
+                    payload = {
+                        'version': {'number': current_version + 1},
+                        'title': title,
+                        'type': 'page',
+                        'body': {
+                            'storage': {
+                                'value': body,
+                                'representation': 'storage'
+                            }
+                        }
+                    }
+
+                    response = self.session.put(
+                        f'{CONFLUENCE_URL}/rest/api/content/{page_id}',
+                        json=payload,
+                        timeout=30
+                    )
+
+                    if response.status_code == 200:
+                        print(f"  ✓ Updated page: {title} (ID: {page_id})")
+                        return True
+                    else:
+                        error_msg = response.json().get('message', response.text)
+                        print(f"  ✗ Failed to update page: {error_msg}")
+                        return False
+
+                except Exception as e:
+                    print(f"  ✗ Error updating page: {e}")
+                    return False
+
+            def add_label_to_page(self, page_id: str, label: str) -> bool:
+                """Add a label to a page"""
+                try:
+                    payload = {
+                        'prefix': 'global',
+                        'name': label
+                    }
+
+                    response = self.session.post(
+                        f'{CONFLUENCE_URL}/rest/api/content/{page_id}/label',
+                        json=[payload],
+                        timeout=30
+                    )
+
+                    return response.status_code in [200, 201]
+                except Exception as e:
+                    print(f"  Warning: Error adding label: {e}")
+                    return False
+
+            def mark_deprecated(self, file_path: Path) -> bool:
+                """Mark a page as deprecated by adding label and warning banner"""
+                try:
+                    # Read file to get title
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+
+                    title = self.get_page_title(file_path, content)
+
+                    # Find the page
+                    page_id = self.find_page_by_title(SPACE_KEY, title)
+
+                    if not page_id:
+                        print(f"  Warning: Page not found for deleted file: {file_path}")
+                        return False
+
+                    # Get current page content
+                    response = self.session.get(
+                        f'{CONFLUENCE_URL}/rest/api/content/{page_id}',
+                        params={'expand': 'body.storage,version'},
+                        timeout=30
+                    )
+
+                    if response.status_code != 200:
+                        return False
+
+                    page_data = response.json()
+                    current_body = page_data['body']['storage']['value']
+                    current_version = page_data['version']['number']
+
+                    # Prepend deprecation warning
+                    deprecation_banner = '''
+        <ac:structured-macro ac:name="warning">
+          <ac:rich-text-body>
+            <p><strong>⚠️ Esta página ha sido deprecada y ya no se mantiene.</strong></p>
+            <p>El archivo fuente ha sido eliminado del repositorio.</p>
+          </ac:rich-text-body>
+        </ac:structured-macro>
+        '''
+
+                    # Only add banner if not already present
+                    if '⚠️ Esta página ha sido deprecada' not in current_body:
+                        new_body = deprecation_banner + current_body
+
+                        # Update page
+                        payload = {
+                            'version': {'number': current_version + 1, 'minorEdit': True},
+                            'title': title,
+                            'type': 'page',
+                            'body': {
+                                'storage': {
+                                    'value': new_body,
+                                    'representation': 'storage'
+                                }
+                            }
+                        }
+
+                        update_response = self.session.put(
+                            f'{CONFLUENCE_URL}/rest/api/content/{page_id}',
+                            json=payload,
+                            timeout=30
+                        )
+
+                        if update_response.status_code != 200:
+                            print(f"  Warning: Failed to update page with deprecation banner")
+
+                    # Add deprecated label
+                    self.add_label_to_page(page_id, 'deprecated')
+
+                    print(f"  ✓ Marked as deprecated: {title}")
+                    return True
+
+                except Exception as e:
+                    print(f"  ✗ Error marking as deprecated: {e}")
+                    return False
+
+            def ensure_folder_page(self, folder_path: Path, parent_id: str) -> Optional[str]:
+                """Ensure a folder page exists for hierarchy"""
+                folder_key = str(folder_path)
+
+                # Check cache
+                if folder_key in self.folder_pages:
+                    return self.folder_pages[folder_key]
+
+                # Create folder page title from folder name
+                folder_name = folder_path.name.replace('_', ' ').replace('-', ' ').title()
+
+                # Check if page exists
+                page_id = self.find_page_by_title(SPACE_KEY, folder_name, parent_id)
+
+                if not page_id:
+                    # Create folder page
+                    body = f'<p>Esta es una página de navegación para la carpeta <strong>{folder_name}</strong>.</p>'
+                    page_id = self.create_page(SPACE_KEY, folder_name, body, parent_id)
+
+                if page_id:
+                    self.folder_pages[folder_key] = page_id
+
+                return page_id
+
+            def sync_file(self, file_path: Path, parent_id: str) -> bool:
+                """Sync a single Markdown file to Confluence"""
+                try:
+                    print(f"\nProcessing: {file_path}")
+
+                    # Read file content
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+
+                    # Extract title
+                    title = self.get_page_title(file_path, content)
+
+                    # Convert Markdown to Confluence Storage Format
+                    confluence_content = self.markdown_to_confluence(content)
+
+                    # Add source metadata comment
+                    source_comment = f'<!-- Synced from: {file_path} -->\n'
+                    confluence_content = source_comment + confluence_content
+
+                    # Check if page exists
+                    page_id = self.find_page_by_title(SPACE_KEY, title, parent_id)
+
+                    if page_id:
+                        # Update existing page
+                        success = self.update_page(page_id, title, confluence_content)
+                    else:
+                        # Create new page
+                        page_id = self.create_page(SPACE_KEY, title, confluence_content, parent_id)
+                        success = page_id is not None
+
+                    if success:
+                        # Get page URL
+                        page_url = f"{CONFLUENCE_URL}/pages/viewpage.action?pageId={page_id}"
+
+                        synced_pages.append({
+                            'file': str(file_path),
+                            'title': title,
+                            'page_id': page_id,
+                            'url': page_url
+                        })
+
+                        return True
+                    else:
+                        failed_pages.append({
+                            'file': str(file_path),
+                            'error': 'Failed to create/update page'
+                        })
+                        return False
+
+                except Exception as e:
+                    error_msg = f"Failed to sync {file_path}: {str(e)}"
+                    print(f"  ✗ {error_msg}")
+
+                    failed_pages.append({
+                        'file': str(file_path),
+                        'error': str(e)
+                    })
+
+                    # Write to error file
+                    with open(ERROR_FILE, 'a') as ef:
+                        ef.write(f"{error_msg}\n")
+
+                    return False
+
+            def get_parent_for_file(self, file_path: Path, base_parent_id: str) -> str:
+                """Determine parent page ID for a file based on its folder hierarchy"""
+                # Get relative path from docs folder
+                docs_path = Path(DOCS_FOLDER)
+                try:
+                    relative_path = file_path.relative_to(docs_path)
+                except ValueError:
+                    return base_parent_id
+
+                # Get parent folder
+                parent_folder = relative_path.parent
+
+                # If file is directly in docs folder, use base parent
+                if str(parent_folder) == '.':
+                    return base_parent_id
+
+                # Build folder hierarchy
+                current_parent = base_parent_id
+                for part in parent_folder.parts:
+                    folder_path = docs_path / '/'.join(parent_folder.parts[:parent_folder.parts.index(part)+1])
+                    folder_page_id = self.ensure_folder_page(folder_path, current_parent)
+                    if folder_page_id:
+                        current_parent = folder_page_id
+                    else:
+                        print(f"  Warning: Could not create folder page for {folder_path}")
+                        return base_parent_id
+
+                return current_parent
+
+            def sync_folder(self, folder_path: Path, parent_id: str):
+                """Sync all Markdown files in a folder"""
+                print(f"\n=== Confluence Documentation Sync ===")
+                print(f"Mode: {SYNC_MODE}")
+                print(f"Docs folder: {DOCS_FOLDER}")
+                print(f"Space: {SPACE_KEY}")
+                print(f"Parent page ID: {parent_id}")
+
+                # Process deleted files first
+                if DELETED_FILES:
+                    print(f"\n--- Processing Deleted Files ---")
+                    for deleted_file in DELETED_FILES:
+                        if deleted_file:
+                            file_path = Path(deleted_file)
+                            # Note: File no longer exists, so we need to reconstruct info
+                            # For now, just log it - full deprecation would need a mapping file
+                            print(f"  Note: File deleted: {deleted_file}")
+                            print(f"  To mark as deprecated, page must be found by title pattern")
+
+                # Get files to sync
+                if SYNC_MODE == 'changed' and CHANGED_FILES:
+                    # Only sync changed files
+                    files_to_sync = [
+                        Path(f) for f in CHANGED_FILES
+                        if f.endswith('.md') and Path(f).exists()
+                    ]
+                    print(f"\n--- Syncing Changed Files ({len(files_to_sync)}) ---")
+                else:
+                    # Sync all files
+                    files_to_sync = list(folder_path.glob('**/*.md'))
+                    print(f"\n--- Syncing All Files ({len(files_to_sync)}) ---")
+
+                if not files_to_sync:
+                    print("No files to sync")
+                    return
+
+                # Sync each file
+                for file_path in files_to_sync:
+                    # Determine correct parent based on file location
+                    file_parent = self.get_parent_for_file(file_path, parent_id)
+                    self.sync_file(file_path, file_parent)
+
+        def main():
+            """Main sync execution"""
+            try:
+                # Initialize sync
+                sync = ConfluenceSync()
+
+                # Sync folder
+                docs_path = Path(DOCS_FOLDER)
+                if not docs_path.exists():
+                    raise Exception(f"Documentation folder not found: {DOCS_FOLDER}")
+
+                sync.sync_folder(docs_path, PARENT_PAGE_ID)
+
+                # Output results
+                print(f"\n=== Sync Complete ===")
+                print(f"✓ Synced: {len(synced_pages)} page(s)")
+                print(f"✗ Failed: {len(failed_pages)} page(s)")
+
+                # Set GitHub Actions outputs
+                if GITHUB_OUTPUT:
+                    with open(GITHUB_OUTPUT, 'a') as f:
+                        f.write(f"synced_pages={len(synced_pages)}\n")
+                        f.write(f"failed_pages={len(failed_pages)}\n")
+
+                        # Output URLs as JSON array
+                        urls = [p['url'] for p in synced_pages]
+                        f.write(f"confluence_urls={json.dumps(urls)}\n")
+
+                # Exit with error if any failures
+                if failed_pages:
+                    print("\nSome pages failed to sync. Check errors above.")
+                    sys.exit(1)
+
+            except Exception as e:
+                error_msg = f"Sync failed: {str(e)}"
+                print(f"\n✗ {error_msg}", file=sys.stderr)
+
+                with open(ERROR_FILE, 'a') as ef:
+                    ef.write(f"{error_msg}\n")
+
+                sys.exit(1)
+
+        if __name__ == '__main__':
+            main()
+        PYTHON_SCRIPT_END

@@ -1,0 +1,127 @@
+name: "Confluence Sync Report"
+description: "Generates sync status report for job logs"
+
+inputs:
+  job_status:
+    description: "Overall job status (success/failure)"
+    required: true
+  synced_pages:
+    description: "Number of synced pages"
+    required: false
+    default: "0"
+  failed_pages:
+    description: "Number of failed pages"
+    required: false
+    default: "0"
+  confluence_urls:
+    description: "JSON array of page URLs"
+    required: false
+    default: "[]"
+  error_file_path:
+    description: "Path to error file"
+    required: false
+    default: ""
+  has_changes:
+    description: "Whether changes were detected"
+    required: false
+    default: "true"
+
+outputs:
+  message:
+    description: "Formatted status message"
+    value: ${{ steps.generate.outputs.message }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Generate Report
+      id: generate
+      uses: actions/github-script@v7
+      env:
+        JOB_STATUS: ${{ inputs.job_status }}
+        SYNCED_PAGES: ${{ inputs.synced_pages }}
+        FAILED_PAGES: ${{ inputs.failed_pages }}
+        CONFLUENCE_URLS: ${{ inputs.confluence_urls }}
+        ERROR_FILE_PATH: ${{ inputs.error_file_path }}
+        HAS_CHANGES: ${{ inputs.has_changes }}
+      with:
+        script: |
+          const fs = require('fs');
+
+          const jobStatus = process.env.JOB_STATUS || 'unknown';
+          const syncedPages = process.env.SYNCED_PAGES || '0';
+          const failedPages = process.env.FAILED_PAGES || '0';
+          const confluenceUrls = process.env.CONFLUENCE_URLS || '[]';
+          const errorFilePath = process.env.ERROR_FILE_PATH || '';
+          const hasChanges = process.env.HAS_CHANGES === 'true';
+
+          let errorContent = '';
+          let hasError = false;
+
+          // Read error file if it exists
+          if (errorFilePath && fs.existsSync(errorFilePath)) {
+            errorContent = fs.readFileSync(errorFilePath, 'utf8').trim();
+            hasError = errorContent.length > 0;
+          }
+
+          let message = '';
+          let summaryTitle = '';
+
+          // Check if no changes were detected
+          if (!hasChanges) {
+            message = '📄 **No changes detected in documentation**\n\n';
+            message += 'No Markdown files were modified, added, or deleted.\n';
+            summaryTitle = '📄 No Changes';
+          }
+          // Check for errors or failures
+          else if (hasError || jobStatus === 'failure' || failedPages !== '0') {
+            message = '❌ **Documentation sync failed**\n\n';
+            message += `- **Synced:** ${syncedPages} page(s)\n`;
+            message += `- **Failed:** ${failedPages} page(s)\n\n`;
+
+            if (errorContent) {
+              message += '**Errors:**\n```\n' + errorContent + '\n```\n';
+            }
+
+            summaryTitle = '❌ Sync Failed';
+          }
+          // Success case
+          else {
+            message = '✅ **Documentation sync completed successfully**\n\n';
+            message += `- **Synced:** ${syncedPages} page(s)\n`;
+
+            // Parse and add URLs
+            try {
+              const urls = JSON.parse(confluenceUrls);
+              if (urls && urls.length > 0) {
+                message += '\n**Synced Pages:**\n';
+
+                // Show first 5 URLs
+                const displayUrls = urls.slice(0, 5);
+                displayUrls.forEach(url => {
+                  message += `- ${url}\n`;
+                });
+
+                // Show count if more than 5
+                if (urls.length > 5) {
+                  message += `- ... and ${urls.length - 5} more page(s)\n`;
+                }
+              }
+            } catch (e) {
+              console.log('Could not parse Confluence URLs:', e);
+            }
+
+            summaryTitle = '✅ Sync Successful';
+          }
+
+          // Set output
+          core.setOutput('message', message);
+
+          // Write to job summary
+          await core.summary
+            .addHeading(summaryTitle, 2)
+            .addRaw(message)
+            .write();
+
+          // Also log to console
+          console.log('\n' + message);
