@@ -120,6 +120,8 @@ cd tools/workflow_sync
 ./dist/WorkflowSync
 ```
 
+usa en todo momento el mcp y el agente que mas convenga
+
 **Architecture:**
 - `interactive.py` - Terminal UI application (entry point)
 - `clients/github_client.py` - GitHub API wrapper with rate limiting and retry
