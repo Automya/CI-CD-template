@@ -427,6 +427,7 @@ runs:
             def update_image_references(self, confluence_html: str, images: list, uploaded_filenames: dict) -> str:
                 """Update image references in Confluence HTML to point to attachments"""
                 import re
+                from urllib.parse import quote
 
                 updated_html = confluence_html
 
@@ -438,21 +439,50 @@ runs:
                     if filename not in uploaded_filenames:
                         continue
 
-                    # Confluence attachment URL format
+                    # Confluence attachment reference format (must be inside ac:image tags)
                     attachment_ref = f'<ri:attachment ri:filename="{filename}" />'
 
-                    # Replace in HTML - look for the converted image tags
-                    # md2cf converts ![alt](path) to <ac:image><ri:url ri:value="path" /></ac:image>
+                    # Try multiple variations of the path to catch all encodings
+                    path_variations = [
+                        original_path,                           # Original: ./image name.png
+                        quote(original_path),                    # URL encoded: ./image%20name.png
+                        original_path.replace(' ', '%20'),       # Space to %20: ./image%20name.png
+                        re.escape(original_path),                # Escaped for regex
+                        re.escape(quote(original_path)),         # Escaped + encoded
+                    ]
 
-                    # Pattern 1: ri:url with the original path
-                    pattern1 = f'<ri:url ri:value="{re.escape(original_path)}"\\s*/>'
-                    replacement1 = attachment_ref
-                    updated_html = re.sub(pattern1, replacement1, updated_html)
+                    # Remove duplicates
+                    path_variations = list(set(path_variations))
 
-                    # Pattern 2: HTML img tags (if any remain)
-                    pattern2 = f'<img[^>]+src=["\'{re.escape(original_path)}["\'][^>]*>'
-                    replacement2 = f'<ac:image><ri:attachment ri:filename="{filename}" /></ac:image>'
-                    updated_html = re.sub(pattern2, replacement2, updated_html)
+                    # Try to replace with each variation
+                    for path_var in path_variations:
+                        # Pattern 1: ri:url tags inside ac:image (created by md2cf)
+                        # <ac:image><ri:url ri:value="path" /></ac:image>
+                        # We want to keep the ac:image wrapper and just replace ri:url
+                        pattern1 = f'(<ac:image[^>]*>)\\s*<ri:url ri:value="{path_var}"\\s*/>\\s*(</ac:image>)'
+                        replacement1 = f'\\g<1>{attachment_ref}\\g<2>'
+                        updated_html = re.sub(pattern1, replacement1, updated_html, flags=re.IGNORECASE)
+
+                        # Pattern 2: ri:url without ac:image wrapper
+                        pattern2 = f'<ri:url ri:value="{path_var}"\\s*/>'
+                        replacement2 = f'<ac:image>{attachment_ref}</ac:image>'
+                        updated_html = re.sub(pattern2, replacement2, updated_html, flags=re.IGNORECASE)
+
+                        # Pattern 3: ri:url with flexible quotes
+                        pattern3 = f'(<ac:image[^>]*>)\\s*<ri:url ri:value=["\']?{path_var}["\']?\\s*/>\\s*(</ac:image>)'
+                        replacement3 = f'\\g<1>{attachment_ref}\\g<2>'
+                        updated_html = re.sub(pattern3, replacement3, updated_html, flags=re.IGNORECASE)
+
+                        # Pattern 4: HTML img tags
+                        pattern4 = f'<img[^>]*src=["\']?{path_var}["\']?[^>]*>'
+                        replacement4 = f'<ac:image>{attachment_ref}</ac:image>'
+                        updated_html = re.sub(pattern4, replacement4, updated_html, flags=re.IGNORECASE)
+
+                    # Fallback: Search for any ri:url that contains the filename
+                    # This catches cases where the path was heavily transformed
+                    filename_pattern = f'(<ac:image[^>]*>)?\\s*<ri:url[^>]*ri:value="[^"]*{re.escape(filename)}"[^>]*/>(\\s*</ac:image>)?'
+                    replacement = f'<ac:image>{attachment_ref}</ac:image>'
+                    updated_html = re.sub(filename_pattern, replacement, updated_html, flags=re.IGNORECASE)
 
                 return updated_html
 
@@ -719,17 +749,19 @@ runs:
 
                     # Upload images as attachments and update references
                     if images and page_id:
-                        print(f"  Uploading images...")
+                        print(f"  Uploading {len(images)} image(s)...")
                         uploaded_filenames = {}
 
                         for img in images:
                             img_path = img['absolute_path']
+                            print(f"    - Image path: {img['path']} -> {img_path}")
                             filename = self.upload_attachment(page_id, img_path)
                             if filename:
                                 uploaded_filenames[filename] = True
 
                         # Update page content with correct attachment references
                         if uploaded_filenames:
+                            print(f"  Updating page with {len(uploaded_filenames)} attachment reference(s)...")
                             updated_content = self.update_image_references(
                                 confluence_content,
                                 images,
@@ -738,8 +770,12 @@ runs:
 
                             # Update page again with corrected image references
                             if updated_content != confluence_content:
-                                print(f"  Updating page with image references...")
+                                print(f"  ✓ Image references updated successfully")
                                 self.update_page(page_id, title, updated_content)
+                            else:
+                                print(f"  ⚠ Warning: No image references were updated in HTML")
+                                print(f"    This might indicate the conversion format changed")
+                                print(f"    Original images: {[img['path'] for img in images]}")
 
                     # Get page URL
                     page_url = f"{CONFLUENCE_URL}/pages/viewpage.action?pageId={page_id}"
