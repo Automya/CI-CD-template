@@ -112,166 +112,49 @@ runs:
                     'Accept': 'application/json'
                 })
                 self.page_cache = {}  # title -> page_id mapping
-                self.folder_cache = {}  # folder_path -> folder_id mapping
-                self.space_id = None  # Will be fetched on first use
+                self.folder_cache = {}  # parent_id + title -> page_id mapping for parent pages
 
-            def get_space_id(self, space_key: str) -> Optional[str]:
-                """Get Space ID from Space Key using API v2"""
-                if self.space_id:
-                    return self.space_id
-
+            def create_parent_page(self, title: str, parent_id: str) -> Optional[str]:
+                """Create a parent page to represent a folder in the hierarchy"""
                 try:
-                    response = self.session.get(
-                        f'{CONFLUENCE_URL}/api/v2/spaces',
-                        params={'keys': space_key},
-                        timeout=30
-                    )
+                    # Check if page already exists first
+                    existing_page_id = self.find_page_by_title(SPACE_KEY, title, parent_id)
+                    if existing_page_id:
+                        print(f"  Found existing parent page: {title} (ID: {existing_page_id})")
+                        return existing_page_id
 
-                    if response.status_code == 200:
-                        results = response.json().get('results', [])
-                        if results:
-                            self.space_id = results[0]['id']
-                            print(f"  Space ID for '{space_key}': {self.space_id}")
-                            return self.space_id
-
-                    print(f"  Error: Could not find space '{space_key}'")
-                    return None
-                except Exception as e:
-                    print(f"  Error getting space ID: {e}")
-                    return None
-
-            def find_folder_by_title(self, title: str, parent_id: Optional[str] = None) -> Optional[str]:
-                """Find folder ID by title using API v2"""
-                try:
-                    # Get space ID
-                    space_id = self.get_space_id(SPACE_KEY)
-                    if not space_id:
-                        print(f"  Could not get space ID for '{SPACE_KEY}'")
-                        return None
-
-                    print(f"  Searching for folder '{title}' in space {space_id}, parent: {parent_id}")
-
-                    # Search folders in space with pagination
-                    params = {
-                        'space-id': space_id,
-                        'limit': 250  # Max results per page
-                    }
-                    if parent_id:
-                        params['parent-id'] = parent_id
-
-                    # Get all folders (handle pagination)
-                    all_folders = []
-                    next_cursor = None
-
-                    while True:
-                        if next_cursor:
-                            params['cursor'] = next_cursor
-
-                        response = self.session.get(
-                            f'{CONFLUENCE_URL}/api/v2/folders',
-                            params=params,
-                            timeout=30
-                        )
-
-                        if response.status_code != 200:
-                            print(f"  Folder API returned {response.status_code}: {response.text[:200]}")
-                            break
-
-                        data = response.json()
-                        results = data.get('results', [])
-                        all_folders.extend(results)
-                        print(f"  Retrieved {len(results)} folders (total: {len(all_folders)})")
-
-                        # Check if there are more pages
-                        links = data.get('_links', {})
-                        if 'next' not in links:
-                            break
-
-                        # Get next cursor from response
-                        next_cursor = links.get('next', '').split('cursor=')[-1] if 'cursor=' in links.get('next', '') else None
-                        if not next_cursor:
-                            break
-
-                    # Debug: print all folder titles found
-                    if all_folders:
-                        folder_titles = [f.get('title') for f in all_folders]
-                        print(f"  Available folders: {folder_titles[:10]}")  # Show first 10
-
-                    # Search for folder by title
-                    for folder in all_folders:
-                        if folder.get('title') == title:
-                            folder_id = folder['id']
-                            print(f"  Found existing folder: {title} (ID: {folder_id})")
-                            return folder_id
-
-                    print(f"  Folder '{title}' not found in {len(all_folders)} folders")
-                    return None
-                except Exception as e:
-                    print(f"  Warning: Error searching for folder '{title}': {e}")
-                    import traceback
-                    traceback.print_exc()
-                    return None
-
-            def create_folder(self, title: str, parent_id: str) -> Optional[str]:
-                """Create a new Confluence folder using API v2"""
-                try:
-                    space_id = self.get_space_id(SPACE_KEY)
-                    if not space_id:
-                        raise Exception("Could not get space ID")
-
+                    # Create a simple parent page with folder icon
                     payload = {
-                        'spaceId': space_id,
+                        'type': 'page',
                         'title': title,
-                        'parentId': parent_id
+                        'space': {'key': SPACE_KEY},
+                        'ancestors': [{'id': parent_id}],
+                        'body': {
+                            'storage': {
+                                'value': f'<p>📁 <em>{title}</em></p>',
+                                'representation': 'storage'
+                            }
+                        }
                     }
 
                     response = self.session.post(
-                        f'{CONFLUENCE_URL}/api/v2/folders',
+                        f'{CONFLUENCE_URL}/rest/api/content',
                         json=payload,
                         timeout=30
                     )
 
-                    if response.status_code in (200, 201):
-                        folder_id = response.json()['id']
-                        print(f"  ✓ Created folder: {title} (ID: {folder_id})")
-                        return folder_id
+                    if response.status_code == 200:
+                        page_id = response.json()['id']
+                        print(f"  ✓ Created parent page: {title} (ID: {page_id})")
+                        return page_id
                     else:
-                        print(f"  ✗ Failed to create folder '{title}': {response.status_code} - {response.text}")
+                        error_msg = response.json().get('message', response.text)
+                        print(f"  ✗ Failed to create parent page '{title}': {error_msg}")
                         return None
 
                 except Exception as e:
-                    print(f"  ✗ Error creating folder '{title}': {e}")
+                    print(f"  ✗ Error creating parent page '{title}': {e}")
                     return None
-
-            def ensure_folder_exists(self, folder_path: Path, parent_id: str) -> Optional[str]:
-                """Ensure a folder exists in Confluence, creating it if necessary"""
-                # Check cache first
-                cache_key = str(folder_path)
-                if cache_key in self.folder_cache:
-                    return self.folder_cache[cache_key]
-
-                # Get folder title from path
-                folder_name = folder_path.name
-                folder_title = folder_name.replace('_', ' ').replace('-', ' ').title()
-
-                # Check if folder already exists
-                folder_id = self.find_folder_by_title(folder_title, parent_id)
-
-                if not folder_id:
-                    # Try to create folder
-                    folder_id = self.create_folder(folder_title, parent_id)
-
-                    # If creation failed with 400 (folder already exists), try to find it again
-                    # This handles race conditions and cases where the folder wasn't found initially
-                    if not folder_id:
-                        print(f"  Retrying folder search: {folder_title}")
-                        folder_id = self.find_folder_by_title(folder_title, parent_id)
-
-                # Cache the result
-                if folder_id:
-                    self.folder_cache[cache_key] = folder_id
-
-                return folder_id
 
             def find_page_by_title(self, space_key: str, title: str, parent_id: Optional[str] = None) -> Optional[str]:
                 """Find page ID by title in space using CQL query"""
@@ -566,18 +449,6 @@ runs:
 
                 return updated_html
 
-            def generate_unique_title(self, base_title: str, file_path: Path) -> str:
-                """Generate unique title by adding hash suffix to avoid duplicates in space"""
-                import hashlib
-
-                # Create hash from file path to ensure uniqueness
-                path_str = str(file_path)
-                hash_obj = hashlib.md5(path_str.encode())
-                hash_suffix = hash_obj.hexdigest()[:8]
-
-                # Append hash to title
-                return f"{base_title} [{hash_suffix}]"
-
             def create_page(self, space_key: str, title: str, body: str, parent_id: str) -> Optional[str]:
                 """Create a new Confluence page"""
                 try:
@@ -766,7 +637,7 @@ runs:
 
 
             def get_parent_folder_for_file(self, file_path: Path, root_parent_id: str) -> Optional[str]:
-                """Get or create parent folders for a file based on its path (using real Confluence folders)"""
+                """Get or create parent pages for a file based on its path (pages as folders)"""
                 docs_path = Path(DOCS_FOLDER if DOCS_FOLDER not in ('.', '', './') else '.')
 
                 try:
@@ -781,32 +652,29 @@ runs:
                 if str(parent_folder) == '.':
                     return root_parent_id
 
-                # Build folder hierarchy using real Confluence folders
+                # Build folder hierarchy using parent pages
                 current_parent_id = root_parent_id
-                accumulated_path = docs_path
 
                 for folder_part in parent_folder.parts:
-                    accumulated_path = accumulated_path / folder_part
-
                     # Format folder name nicely
                     folder_title = folder_part.replace('_', ' ').replace('-', ' ').title()
 
                     # Check cache first
-                    cache_key = str(accumulated_path)
+                    cache_key = f"{current_parent_id}_{folder_title}"
                     if cache_key in self.folder_cache:
                         current_parent_id = self.folder_cache[cache_key]
                         continue
 
-                    # Use real folder API
-                    folder_id = self.ensure_folder_exists(accumulated_path, current_parent_id)
+                    # Create parent page to represent the folder
+                    page_id = self.create_parent_page(folder_title, current_parent_id)
 
-                    if not folder_id:
-                        print(f"  Warning: Could not create folder for {folder_part}")
+                    if not page_id:
+                        print(f"  Warning: Could not create parent page for {folder_part}")
                         return root_parent_id
 
                     # Cache it
-                    self.folder_cache[cache_key] = folder_id
-                    current_parent_id = folder_id
+                    self.folder_cache[cache_key] = page_id
+                    current_parent_id = page_id
 
                 return current_parent_id
 
@@ -819,13 +687,10 @@ runs:
                     with open(file_path, 'r', encoding='utf-8') as f:
                         content = f.read()
 
-                    # Extract base title (from frontmatter or filename)
-                    base_title = self.get_page_title(file_path, content)
+                    # Extract title (from frontmatter or filename)
+                    title = self.get_page_title(file_path, content)
 
-                    # Generate unique title to avoid collisions in space
-                    title = self.generate_unique_title(base_title, file_path)
-
-                    # Get the parent folder ID for this file (creating folders as needed)
+                    # Get the parent page ID for this file (creating parent pages as needed)
                     parent_id = self.get_parent_folder_for_file(file_path, root_parent_id)
 
                     # Extract image paths from Markdown
@@ -981,9 +846,10 @@ runs:
                     print("No files to sync")
                     return
 
-                # Sync each file, creating real Confluence folders to preserve GitHub folder hierarchy
-                # GitHub folders → Confluence folders (using API v2 /api/v2/folders)
-                # GitHub .md files → Confluence pages (inside folders)
+                # Sync each file, creating parent pages to preserve GitHub folder hierarchy
+                # GitHub folders → Confluence parent pages (with 📁 icon)
+                # GitHub .md files → Confluence child pages
+                # This creates a visual hierarchy in the Confluence page tree
                 for file_path in files_to_sync:
                     self.sync_file(file_path, parent_id)
 
