@@ -342,13 +342,17 @@ runs:
                     })
 
                 # Resolve relative paths
+                from urllib.parse import unquote
+
                 base_dir = file_path.parent
                 for img in images:
-                    img_path = Path(img['path'])
+                    # Decode URL-encoded characters (e.g., %20 -> space, %2C -> comma)
+                    decoded_path = unquote(img['path'])
+                    img_path = Path(decoded_path)
 
                     # Handle absolute paths from repo root (starting with /)
-                    if img['path'].startswith('/'):
-                        img['absolute_path'] = Path(img['path'].lstrip('/'))
+                    if decoded_path.startswith('/'):
+                        img['absolute_path'] = Path(decoded_path.lstrip('/'))
                     else:
                         # Relative path from markdown file location
                         img['absolute_path'] = (base_dir / img_path).resolve()
