@@ -75,9 +75,13 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        echo "Installing Python dependencies for Confluence sync..."
-        pip install --quiet --upgrade pip
-        pip install --quiet md2cf PyYAML requests
+        echo "📦 Installing Python dependencies for Confluence sync..."
+        pip install --upgrade pip
+        pip install md2cf PyYAML requests mistune
+        echo "✅ Dependencies installed successfully"
+        echo ""
+        echo "Installed versions:"
+        pip show md2cf PyYAML requests mistune | grep -E "^(Name|Version):"
 
     # 5. Detect changed files (compare HEAD vs HEAD~1)
     - name: Detect Changes

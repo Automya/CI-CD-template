@@ -162,11 +162,25 @@ Esto previene la pérdida accidental de documentación.
 
 ## Troubleshooting
 
+### Warning: "No file matched to requirements*.txt"
+
+**Causa**: Mensaje de advertencia (no error) de setup-python cuando no encuentra archivos de dependencias
+
+**Solución**:
+- Este warning es **normal y seguro** si tu repositorio solo contiene documentación
+- Las dependencias Python se instalan correctamente en el siguiente paso
+- No afecta la funcionalidad del sync
+- El warning ya fue eliminado en la última versión de la action
+
 ### Error: "Authentication failed"
 
-- Verifica que el `confluence_username` sea el email correcto
-- Verifica que el `confluence_api_token` sea válido y no haya expirado
-- Los tokens creados antes del 15 de diciembre de 2024 expirarán entre marzo y mayo de 2026
+**Causa**: Credenciales incorrectas
+
+**Solución**:
+1. Verifica que `CONFLUENCE_USERNAME` sea tu email
+2. Regenera el API token
+3. Actualiza el secret `CONFLUENCE_API_TOKEN`
+4. Los tokens creados antes del 15 de diciembre de 2024 expirarán entre marzo y mayo de 2026
 
 ### Error: "Page not found"
 
