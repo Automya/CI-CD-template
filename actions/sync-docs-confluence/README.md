@@ -5,8 +5,8 @@ Action de GitHub que sincroniza automáticamente documentación Markdown desde u
 ## Características
 
 - ✅ **Sincronización automática** en push a la carpeta de documentación
-- 📁 **Organización por carpetas** - Las carpetas de GitHub se reflejan como prefijos en los títulos (ej: "Guides / Installation")
-- 🗂️ **Sincronización a Confluence Folders** - Crea páginas directamente dentro de folders de Confluence
+- 📁 **Jerarquía de carpetas preservada** - Las carpetas de GitHub se convierten en folders reales de Confluence
+- 🗂️ **Folders y páginas separados** - Carpetas → Confluence folders, archivos .md → páginas dentro de folders
 - 🏷️ **Páginas deprecated** - Archivos eliminados se marcan como deprecated (no se eliminan)
 - 🔄 **Idempotencia** - Solo actualiza si el contenido cambió
 - 📝 **Soporte de frontmatter** - Extrae títulos y metadata de archivos YAML frontmatter
@@ -186,9 +186,9 @@ title: Mi Título Personalizado
 
 Sin frontmatter, el título se genera automáticamente desde el nombre del archivo.
 
-### Organización por Carpetas
+### Jerarquía de Carpetas
 
-Las carpetas de GitHub se representan como **prefijos en los títulos** de las páginas en Confluence. Todas las páginas se crean directamente dentro del folder/página padre de Confluence.
+Las carpetas de GitHub se convierten en **folders reales de Confluence** (no páginas). La jerarquía se preserva completamente.
 
 **Estructura en GitHub:**
 ```
@@ -200,20 +200,21 @@ docs/
       └── configuration.md
 ```
 
-**Páginas creadas en Confluence:**
+**Estructura creada en Confluence:**
 ```
 Parent Folder (ID: confluence_parent_page_id)
-  ├── "Index"                        (docs/index.md)
-  ├── "Getting Started"              (docs/getting-started.md)
-  ├── "Guides / Installation"        (docs/guides/installation.md)
-  └── "Guides / Configuration"       (docs/guides/configuration.md)
+  ├── Index (página)
+  ├── Getting Started (página)
+  └── Guides (folder real de Confluence)
+      ├── Installation (página)
+      └── Configuration (página)
 ```
 
 **Ventajas de este enfoque:**
-- ✅ Todas las páginas en un solo nivel dentro del folder de Confluence
-- ✅ Fácil navegación y búsqueda en Confluence
-- ✅ Los títulos con prefijos mantienen la organización visible
-- ✅ No se crean páginas vacías para carpetas
+- ✅ Carpetas de GitHub = Folders reales de Confluence (no páginas)
+- ✅ Estructura de carpetas idéntica en ambos lados
+- ✅ Fácil navegación y organización en Confluence
+- ✅ Los títulos de páginas no necesitan prefijos
 
 ### Sincronizar desde la Raíz del Repositorio
 
@@ -234,10 +235,10 @@ with:
 **Ejemplo de estructura:**
 ```
 repo-root/
-  ├── README.md              → Página "README" (nivel 1)
-  ├── SETUP.md               → Página "SETUP" (nivel 1)
-  ├── guides/
-  │   └── quickstart.md     → Página "Quickstart" (nivel 2, hijo de "Guides")
+  ├── README.md              → Página "README"
+  ├── SETUP.md               → Página "SETUP"
+  ├── guides/                → Folder "Guides" en Confluence
+  │   └── quickstart.md     → Página "Quickstart" dentro del folder "Guides"
   └── .github/              → EXCLUIDO (no se sincroniza)
 ```
 
@@ -256,10 +257,11 @@ Esto previene la pérdida accidental de documentación.
 
 1. **Detección de cambios**: Compara el commit actual vs el anterior para identificar archivos `.md` modificados/eliminados
 2. **Conversión**: Convierte Markdown a Confluence Storage Format usando la librería `md2cf`
-3. **Búsqueda**: Busca si la página ya existe en Confluence por título
-4. **Sync**: Crea o actualiza la página según corresponda
-5. **Jerarquía**: Crea páginas intermedias para carpetas si es necesario
-6. **Reporte**: Genera un resumen con páginas sincronizadas y errores
+3. **Folders**: Crea folders reales de Confluence para cada carpeta de GitHub (usando API v2)
+4. **Búsqueda**: Busca si la página ya existe en Confluence por título
+5. **Sync**: Crea o actualiza páginas dentro de los folders correspondientes
+6. **Jerarquía**: Preserva la estructura completa de carpetas
+7. **Reporte**: Genera un resumen con páginas sincronizadas y errores
 
 ## Troubleshooting
 

@@ -112,7 +112,114 @@ runs:
                     'Accept': 'application/json'
                 })
                 self.page_cache = {}  # title -> page_id mapping
-                self.folder_pages = {}  # folder_path -> page_id mapping
+                self.folder_cache = {}  # folder_path -> folder_id mapping
+                self.space_id = None  # Will be fetched on first use
+
+            def get_space_id(self, space_key: str) -> Optional[str]:
+                """Get Space ID from Space Key using API v2"""
+                if self.space_id:
+                    return self.space_id
+
+                try:
+                    response = self.session.get(
+                        f'{CONFLUENCE_URL}/api/v2/spaces',
+                        params={'keys': space_key},
+                        timeout=30
+                    )
+
+                    if response.status_code == 200:
+                        results = response.json().get('results', [])
+                        if results:
+                            self.space_id = results[0]['id']
+                            print(f"  Space ID for '{space_key}': {self.space_id}")
+                            return self.space_id
+
+                    print(f"  Error: Could not find space '{space_key}'")
+                    return None
+                except Exception as e:
+                    print(f"  Error getting space ID: {e}")
+                    return None
+
+            def find_folder_by_title(self, title: str, parent_id: Optional[str] = None) -> Optional[str]:
+                """Find folder ID by title using API v2"""
+                try:
+                    # Get folders in space
+                    params = {}
+                    if parent_id:
+                        params['parent-id'] = parent_id
+
+                    response = self.session.get(
+                        f'{CONFLUENCE_URL}/api/v2/folders',
+                        params=params,
+                        timeout=30
+                    )
+
+                    if response.status_code == 200:
+                        results = response.json().get('results', [])
+                        for folder in results:
+                            if folder.get('title') == title:
+                                folder_id = folder['id']
+                                print(f"  Found existing folder: {title} (ID: {folder_id})")
+                                return folder_id
+                    return None
+                except Exception as e:
+                    print(f"  Warning: Error searching for folder '{title}': {e}")
+                    return None
+
+            def create_folder(self, title: str, parent_id: str) -> Optional[str]:
+                """Create a new Confluence folder using API v2"""
+                try:
+                    space_id = self.get_space_id(SPACE_KEY)
+                    if not space_id:
+                        raise Exception("Could not get space ID")
+
+                    payload = {
+                        'spaceId': space_id,
+                        'title': title,
+                        'parentId': parent_id
+                    }
+
+                    response = self.session.post(
+                        f'{CONFLUENCE_URL}/api/v2/folders',
+                        json=payload,
+                        timeout=30
+                    )
+
+                    if response.status_code in (200, 201):
+                        folder_id = response.json()['id']
+                        print(f"  ✓ Created folder: {title} (ID: {folder_id})")
+                        return folder_id
+                    else:
+                        print(f"  ✗ Failed to create folder '{title}': {response.status_code} - {response.text}")
+                        return None
+
+                except Exception as e:
+                    print(f"  ✗ Error creating folder '{title}': {e}")
+                    return None
+
+            def ensure_folder_exists(self, folder_path: Path, parent_id: str) -> Optional[str]:
+                """Ensure a folder exists in Confluence, creating it if necessary"""
+                # Check cache first
+                cache_key = str(folder_path)
+                if cache_key in self.folder_cache:
+                    return self.folder_cache[cache_key]
+
+                # Get folder title from path
+                folder_name = folder_path.name
+                folder_title = folder_name.replace('_', ' ').replace('-', ' ').title()
+
+                # Check if folder already exists
+                folder_id = self.find_folder_by_title(folder_title, parent_id)
+
+                if not folder_id:
+                    # Create folder
+                    folder_id = self.create_folder(folder_title, parent_id)
+
+                # Cache the result
+                if folder_id:
+                    self.folder_cache[cache_key] = folder_id
+
+                return folder_id
 
             def find_page_by_title(self, space_key: str, title: str, parent_id: Optional[str] = None) -> Optional[str]:
                 """Find page ID by title in space using CQL query"""
@@ -378,7 +485,37 @@ runs:
 
                 return False
 
-            def sync_file(self, file_path: Path, parent_id: str) -> bool:
+            def get_parent_folder_for_file(self, file_path: Path, root_parent_id: str) -> Optional[str]:
+                """Get or create parent folder for a file based on its path"""
+                docs_path = Path(DOCS_FOLDER if DOCS_FOLDER not in ('.', '', './') else '.')
+
+                try:
+                    relative_path = file_path.relative_to(docs_path)
+                except ValueError:
+                    return root_parent_id
+
+                # Get parent folder path
+                parent_folder = relative_path.parent
+
+                # If file is directly in docs folder, use root parent
+                if str(parent_folder) == '.':
+                    return root_parent_id
+
+                # Build folder hierarchy
+                current_parent_id = root_parent_id
+                for folder_part in parent_folder.parts:
+                    folder_path = docs_path / Path(*parent_folder.parts[:parent_folder.parts.index(folder_part) + 1])
+                    folder_id = self.ensure_folder_exists(folder_path, current_parent_id)
+
+                    if not folder_id:
+                        print(f"  Warning: Could not create folder for {folder_path}")
+                        return root_parent_id
+
+                    current_parent_id = folder_id
+
+                return current_parent_id
+
+            def sync_file(self, file_path: Path, root_parent_id: str) -> bool:
                 """Sync a single Markdown file to Confluence"""
                 try:
                     print(f"\nProcessing: {file_path}")
@@ -387,11 +524,11 @@ runs:
                     with open(file_path, 'r', encoding='utf-8') as f:
                         content = f.read()
 
-                    # Extract base title (from frontmatter or filename)
-                    base_title = self.get_page_title(file_path, content)
+                    # Extract title (from frontmatter or filename) - NO folder prefix
+                    title = self.get_page_title(file_path, content)
 
-                    # Add folder prefix to title for organization
-                    title = self.get_title_with_folder_prefix(file_path, base_title)
+                    # Get the parent folder ID for this file (creating folders as needed)
+                    parent_id = self.get_parent_folder_for_file(file_path, root_parent_id)
 
                     # Convert Markdown to Confluence Storage Format
                     confluence_content = self.markdown_to_confluence(content)
@@ -400,7 +537,7 @@ runs:
                     source_comment = f'<!-- Synced from: {file_path} -->\n'
                     confluence_content = source_comment + confluence_content
 
-                    # Check if page exists (search by full title with folder prefix)
+                    # Check if page exists
                     page_id = self.find_page_by_title(SPACE_KEY, title, parent_id)
 
                     if page_id:
@@ -445,36 +582,13 @@ runs:
 
                     return False
 
-            def get_title_with_folder_prefix(self, file_path: Path, base_title: str) -> str:
-                """Add folder path as prefix to title for organization"""
-                docs_path = Path(DOCS_FOLDER if DOCS_FOLDER not in ('.', '', './') else '.')
-
-                try:
-                    relative_path = file_path.relative_to(docs_path)
-                except ValueError:
-                    return base_title
-
-                # Get parent folder path
-                parent_folder = relative_path.parent
-
-                # If file is directly in docs folder, no prefix needed
-                if str(parent_folder) == '.':
-                    return base_title
-
-                # Build folder prefix (e.g., "guides/advanced" -> "Guides / Advanced")
-                folder_parts = [part.replace('_', ' ').replace('-', ' ').title() for part in parent_folder.parts]
-                folder_prefix = ' / '.join(folder_parts)
-
-                # Combine folder prefix with title
-                return f"{folder_prefix} / {base_title}"
-
             def sync_folder(self, folder_path: Path, parent_id: str):
-                """Sync all Markdown files in a folder"""
+                """Sync all Markdown files in a folder, creating Confluence folders as needed"""
                 print(f"\n=== Confluence Documentation Sync ===")
                 print(f"Mode: {SYNC_MODE}")
                 print(f"Docs folder: {DOCS_FOLDER}")
                 print(f"Space: {SPACE_KEY}")
-                print(f"Parent page ID: {parent_id}")
+                print(f"Parent folder/page ID: {parent_id}")
 
                 # Process deleted files first
                 if DELETED_FILES:
@@ -505,8 +619,9 @@ runs:
                     print("No files to sync")
                     return
 
-                # Sync each file directly under the parent folder
-                # Folder hierarchy is preserved in the page title (e.g., "Guides / Installation")
+                # Sync each file, creating Confluence folders as needed to preserve hierarchy
+                # GitHub folders → Confluence folders (real folders, not pages)
+                # GitHub .md files → Confluence pages (inside folders)
                 for file_path in files_to_sync:
                     self.sync_file(file_path, parent_id)
 
