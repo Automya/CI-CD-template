@@ -5,7 +5,8 @@ Action de GitHub que sincroniza automáticamente documentación Markdown desde u
 ## Características
 
 - ✅ **Sincronización automática** en push a la carpeta de documentación
-- 📁 **Preservación de jerarquía** - Las carpetas se convierten en páginas padre en Confluence
+- 📁 **Organización por carpetas** - Las carpetas de GitHub se reflejan como prefijos en los títulos (ej: "Guides / Installation")
+- 🗂️ **Sincronización a Confluence Folders** - Crea páginas directamente dentro de folders de Confluence
 - 🏷️ **Páginas deprecated** - Archivos eliminados se marcan como deprecated (no se eliminan)
 - 🔄 **Idempotencia** - Solo actualiza si el contenido cambió
 - 📝 **Soporte de frontmatter** - Extrae títulos y metadata de archivos YAML frontmatter
