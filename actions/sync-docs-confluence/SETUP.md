@@ -50,10 +50,27 @@ El ID estará en el campo `id` del resultado.
 
 ## 🔐 Paso 3: Configurar Secrets en GitHub
 
-1. Ve a tu repositorio en GitHub
+Puedes configurar los secrets a **nivel de organización** (recomendado si tienes múltiples repos) o a **nivel de repositorio**.
+
+### Opción A: Secrets a Nivel de Organización (Recomendado)
+
+Si tienes varios repositorios de documentación que sincronizan al mismo Confluence:
+
+1. Ve a tu **organización** en GitHub
+2. Click en **Settings** → **Secrets and variables** → **Actions**
+3. Click en **"New organization secret"**
+4. Agrega cada secret y selecciona los repositorios que tendrán acceso
+
+### Opción B: Secrets a Nivel de Repositorio
+
+Si solo tienes un repositorio:
+
+1. Ve a tu **repositorio** en GitHub
 2. Click en **Settings** → **Secrets and variables** → **Actions**
 3. Click en **"New repository secret"**
-4. Agrega los siguientes secrets:
+4. Agrega cada secret
+
+### Secrets Requeridos:
 
 | Secret Name | Descripción | Ejemplo |
 |-------------|-------------|---------|
@@ -62,6 +79,8 @@ El ID estará en el campo `id` del resultado.
 | `CONFLUENCE_API_TOKEN` | El token generado en Paso 1 | `ATATT3x...` |
 | `CONFLUENCE_SPACE_KEY` | Clave del espacio (en mayúsculas) | `DOCS` o `TEAM` |
 | `CONFLUENCE_PARENT_PAGE_ID` | ID de la página padre (Paso 2) | `123456789` |
+
+💡 **Tip:** Los secrets de organización se comparten automáticamente con todos los repositorios seleccionados, facilitando la configuración de múltiples repos.
 
 ### 📸 Captura de pantalla de ejemplo:
 
