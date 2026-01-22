@@ -39,13 +39,22 @@ runs:
         echo "Detecting changes in documentation folder: $DOCS_FOLDER"
         echo "Comparing $BASE_REF vs $HEAD_REF"
 
-        # Get changed files (Added, Changed, Modified, Renamed)
-        # Using --diff-filter=ACMR to include only additions, changes, modifications, and renames
-        CHANGED=$(git diff --name-only --diff-filter=ACMR "$BASE_REF" "$HEAD_REF" -- "${DOCS_FOLDER}/**/*.md" 2>/dev/null | tr '\n' ' ' || echo "")
+        # Determine the correct path pattern for git diff
+        if [ "$DOCS_FOLDER" = "." ] || [ "$DOCS_FOLDER" = "./" ]; then
+          # When syncing from root, search for all .md files recursively
+          # Use '*.md' for root level and find additional files with grep
+          echo "Searching for all .md files in repository (excluding .github)"
 
-        # Get deleted files
-        # Using --diff-filter=D to include only deletions
-        DELETED=$(git diff --name-only --diff-filter=D "$BASE_REF" "$HEAD_REF" -- "${DOCS_FOLDER}/**/*.md" 2>/dev/null | tr '\n' ' ' || echo "")
+          # Get all changed .md files, then filter out .github
+          CHANGED=$(git diff --name-only --diff-filter=ACMR "$BASE_REF" "$HEAD_REF" 2>/dev/null | grep '\.md$' | grep -v '^\.github/' | tr '\n' ' ' || echo "")
+          DELETED=$(git diff --name-only --diff-filter=D "$BASE_REF" "$HEAD_REF" 2>/dev/null | grep '\.md$' | grep -v '^\.github/' | tr '\n' ' ' || echo "")
+        else
+          # When syncing from specific folder, use folder/**/*.md pattern
+          echo "Using path pattern: ${DOCS_FOLDER}/**/*.md"
+
+          CHANGED=$(git diff --name-only --diff-filter=ACMR "$BASE_REF" "$HEAD_REF" -- "${DOCS_FOLDER}/**/*.md" 2>/dev/null | tr '\n' ' ' || echo "")
+          DELETED=$(git diff --name-only --diff-filter=D "$BASE_REF" "$HEAD_REF" -- "${DOCS_FOLDER}/**/*.md" 2>/dev/null | tr '\n' ' ' || echo "")
+        fi
 
         # Set outputs
         echo "changed_files=$CHANGED" >> "$GITHUB_OUTPUT"
