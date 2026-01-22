@@ -455,14 +455,22 @@ runs:
 
                     # Prepare file for upload
                     with open(file_path, 'rb') as f:
-                        files = {'file': (sanitized_filename, f, self._get_mime_type(file_path))}
+                        # Read file content
+                        file_content = f.read()
+                        mime_type = self._get_mime_type(file_path)
 
-                        # Remove Content-Type header for multipart upload
-                        headers = {k: v for k, v in self.session.headers.items() if k.lower() != 'content-type'}
+                        print(f"    File size: {len(file_content)} bytes, MIME: {mime_type}")
+
+                        files = {'file': (sanitized_filename, file_content, mime_type)}
+
+                        # Remove Content-Type header and add X-Atlassian-Token for Confluence
+                        headers = {k: v for k, v in self.session.headers.items() if k.lower() not in ('content-type', 'accept')}
+                        headers['X-Atlassian-Token'] = 'no-check'
 
                         if check_response.status_code == 200 and check_response.json().get('results'):
                             # Update existing attachment
                             attachment_id = check_response.json()['results'][0]['id']
+                            print(f"    Updating existing attachment ID: {attachment_id}")
                             response = self.session.post(
                                 f'{CONFLUENCE_URL}/rest/api/content/{page_id}/child/attachment/{attachment_id}/data',
                                 files=files,
@@ -472,6 +480,7 @@ runs:
                             )
                         else:
                             # Create new attachment
+                            print(f"    Creating new attachment")
                             response = self.session.post(
                                 f'{CONFLUENCE_URL}/rest/api/content/{page_id}/child/attachment',
                                 files=files,
@@ -485,6 +494,7 @@ runs:
                         return sanitized_filename
                     else:
                         print(f"  ✗ Failed to upload {sanitized_filename}: {response.status_code}")
+                        print(f"    Response: {response.text[:200]}")
                         return None
 
                 except Exception as e:
@@ -569,6 +579,18 @@ runs:
                     updated_html = re.sub(filename_pattern, replacement, updated_html, flags=re.IGNORECASE)
 
                 return updated_html
+
+            def generate_unique_title(self, base_title: str, file_path: Path) -> str:
+                """Generate unique title by adding hash suffix to avoid duplicates in space"""
+                import hashlib
+
+                # Create hash from file path to ensure uniqueness
+                path_str = str(file_path)
+                hash_obj = hashlib.md5(path_str.encode())
+                hash_suffix = hash_obj.hexdigest()[:8]
+
+                # Append hash to title
+                return f"{base_title} [{hash_suffix}]"
 
             def create_page(self, space_key: str, title: str, body: str, parent_id: str) -> Optional[str]:
                 """Create a new Confluence page"""
@@ -841,8 +863,11 @@ runs:
                     with open(file_path, 'r', encoding='utf-8') as f:
                         content = f.read()
 
-                    # Extract title (from frontmatter or filename) - NO folder prefix
-                    title = self.get_page_title(file_path, content)
+                    # Extract base title (from frontmatter or filename)
+                    base_title = self.get_page_title(file_path, content)
+
+                    # Generate unique title to avoid collisions in space
+                    title = self.generate_unique_title(base_title, file_path)
 
                     # Get the parent folder ID for this file (creating folders as needed)
                     parent_id = self.get_parent_folder_for_file(file_path, root_parent_id)
