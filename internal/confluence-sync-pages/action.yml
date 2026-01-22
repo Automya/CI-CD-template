@@ -457,15 +457,14 @@ runs:
                     with open(file_path, 'rb') as f:
                         # Read file content
                         file_content = f.read()
-                        mime_type = self._get_mime_type(file_path)
 
-                        print(f"    File size: {len(file_content)} bytes, MIME: {mime_type}")
+                        print(f"    File size: {len(file_content)} bytes")
 
-                        files = {'file': (sanitized_filename, file_content, mime_type)}
+                        # Let requests library handle Content-Type automatically
+                        files = {'file': (sanitized_filename, file_content)}
 
-                        # Remove Content-Type header and add X-Atlassian-Token for Confluence
-                        headers = {k: v for k, v in self.session.headers.items() if k.lower() not in ('content-type', 'accept')}
-                        headers['X-Atlassian-Token'] = 'no-check'
+                        # Only set X-Atlassian-Token header, let requests handle the rest
+                        headers = {'X-Atlassian-Token': 'no-check'}
 
                         if check_response.status_code == 200 and check_response.json().get('results'):
                             # Update existing attachment
@@ -501,19 +500,6 @@ runs:
                     print(f"  ✗ Error uploading {file_path}: {e}")
                     return None
 
-            def _get_mime_type(self, file_path: Path) -> str:
-                """Get MIME type for image file"""
-                extension = file_path.suffix.lower()
-                mime_types = {
-                    '.png': 'image/png',
-                    '.jpg': 'image/jpeg',
-                    '.jpeg': 'image/jpeg',
-                    '.gif': 'image/gif',
-                    '.svg': 'image/svg+xml',
-                    '.webp': 'image/webp',
-                    '.bmp': 'image/bmp',
-                }
-                return mime_types.get(extension, 'application/octet-stream')
 
             def update_image_references(self, confluence_html: str, images: list, uploaded_filenames: dict) -> str:
                 """Update image references in Confluence HTML to point to attachments"""
@@ -778,43 +764,9 @@ runs:
 
                 return False
 
-            def create_folder_page(self, title: str, parent_id: str) -> Optional[str]:
-                """Create a simple page to act as a folder (no API v2 needed)"""
-                try:
-                    # Create empty page that acts as folder
-                    payload = {
-                        'type': 'page',
-                        'title': title,
-                        'space': {'key': SPACE_KEY},
-                        'ancestors': [{'id': parent_id}],
-                        'body': {
-                            'storage': {
-                                'value': f'<p><em>Folder: {title}</em></p>',
-                                'representation': 'storage'
-                            }
-                        }
-                    }
-
-                    response = self.session.post(
-                        f'{CONFLUENCE_URL}/rest/api/content',
-                        json=payload,
-                        timeout=30
-                    )
-
-                    if response.status_code in (200, 201):
-                        page_id = response.json()['id']
-                        print(f"  ✓ Created folder page: {title} (ID: {page_id})")
-                        return page_id
-                    else:
-                        print(f"  ✗ Failed to create folder page '{title}': {response.status_code}")
-                        return None
-
-                except Exception as e:
-                    print(f"  ✗ Error creating folder page '{title}': {e}")
-                    return None
 
             def get_parent_folder_for_file(self, file_path: Path, root_parent_id: str) -> Optional[str]:
-                """Get or create parent folder pages for a file based on its path"""
+                """Get or create parent folders for a file based on its path (using real Confluence folders)"""
                 docs_path = Path(DOCS_FOLDER if DOCS_FOLDER not in ('.', '', './') else '.')
 
                 try:
@@ -829,23 +781,27 @@ runs:
                 if str(parent_folder) == '.':
                     return root_parent_id
 
-                # Build folder hierarchy (using pages, not folders)
+                # Build folder hierarchy using real Confluence folders
                 current_parent_id = root_parent_id
+                accumulated_path = docs_path
+
                 for folder_part in parent_folder.parts:
+                    accumulated_path = accumulated_path / folder_part
+
                     # Format folder name nicely
                     folder_title = folder_part.replace('_', ' ').replace('-', ' ').title()
 
                     # Check cache first
-                    cache_key = f"{current_parent_id}_{folder_title}"
+                    cache_key = str(accumulated_path)
                     if cache_key in self.folder_cache:
                         current_parent_id = self.folder_cache[cache_key]
                         continue
 
-                    # Create folder page
-                    folder_id = self.create_folder_page(folder_title, current_parent_id)
+                    # Use real folder API
+                    folder_id = self.ensure_folder_exists(accumulated_path, current_parent_id)
 
                     if not folder_id:
-                        print(f"  Warning: Could not create folder page for {folder_part}")
+                        print(f"  Warning: Could not create folder for {folder_part}")
                         return root_parent_id
 
                     # Cache it
@@ -1025,8 +981,8 @@ runs:
                     print("No files to sync")
                     return
 
-                # Sync each file, creating Confluence folders as needed to preserve hierarchy
-                # GitHub folders → Confluence folders (real folders, not pages)
+                # Sync each file, creating real Confluence folders to preserve GitHub folder hierarchy
+                # GitHub folders → Confluence folders (using API v2 /api/v2/folders)
                 # GitHub .md files → Confluence pages (inside folders)
                 for file_path in files_to_sync:
                     self.sync_file(file_path, parent_id)
