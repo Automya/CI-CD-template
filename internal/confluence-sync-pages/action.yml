@@ -466,34 +466,28 @@ runs:
 
                     return False
 
-            def get_parent_for_file(self, file_path: Path, base_parent_id: str) -> str:
-                """Determine parent page ID for a file based on its folder hierarchy"""
-                # Get relative path from docs folder
-                docs_path = Path(DOCS_FOLDER)
+            def get_title_with_folder_prefix(self, file_path: Path, base_title: str) -> str:
+                """Add folder path as prefix to title for organization"""
+                docs_path = Path(DOCS_FOLDER if DOCS_FOLDER not in ('.', '', './') else '.')
+
                 try:
                     relative_path = file_path.relative_to(docs_path)
                 except ValueError:
-                    return base_parent_id
+                    return base_title
 
-                # Get parent folder
+                # Get parent folder path
                 parent_folder = relative_path.parent
 
-                # If file is directly in docs folder, use base parent
+                # If file is directly in docs folder, no prefix needed
                 if str(parent_folder) == '.':
-                    return base_parent_id
+                    return base_title
 
-                # Build folder hierarchy
-                current_parent = base_parent_id
-                for part in parent_folder.parts:
-                    folder_path = docs_path / '/'.join(parent_folder.parts[:parent_folder.parts.index(part)+1])
-                    folder_page_id = self.ensure_folder_page(folder_path, current_parent)
-                    if folder_page_id:
-                        current_parent = folder_page_id
-                    else:
-                        print(f"  Warning: Could not create folder page for {folder_path}")
-                        return base_parent_id
+                # Build folder prefix (e.g., "guides/advanced" -> "Guides / Advanced")
+                folder_parts = [part.replace('_', ' ').replace('-', ' ').title() for part in parent_folder.parts]
+                folder_prefix = ' / '.join(folder_parts)
 
-                return current_parent
+                # Combine folder prefix with title
+                return f"{folder_prefix} / {base_title}"
 
             def sync_folder(self, folder_path: Path, parent_id: str):
                 """Sync all Markdown files in a folder"""
