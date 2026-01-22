@@ -64,15 +64,11 @@ runs:
       with:
         fetch-depth: 2
 
-    # 3. Setup Python 3.11 with pip cache
+    # 3. Setup Python 3.11 (without cache to avoid warning in docs-only repos)
     - name: Setup Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
-        cache: 'pip'
-        cache-dependency-path: |
-          **/requirements*.txt
-          **/pyproject.toml
 
     # 4. Install Python dependencies
     - name: Install Dependencies
