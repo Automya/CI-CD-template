@@ -499,12 +499,13 @@ runs:
                     # Only sync changed files
                     files_to_sync = [
                         Path(f) for f in CHANGED_FILES
-                        if f.endswith('.md') and Path(f).exists()
+                        if f.endswith('.md') and Path(f).exists() and not self._should_exclude(Path(f))
                     ]
                     print(f"\n--- Syncing Changed Files ({len(files_to_sync)}) ---")
                 else:
-                    # Sync all files
-                    files_to_sync = list(folder_path.glob('**/*.md'))
+                    # Sync all files, excluding .github and other system folders
+                    all_files = folder_path.glob('**/*.md')
+                    files_to_sync = [f for f in all_files if not self._should_exclude(f)]
                     print(f"\n--- Syncing All Files ({len(files_to_sync)}) ---")
 
                 if not files_to_sync:
