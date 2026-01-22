@@ -358,6 +358,26 @@ runs:
                     print(f"  ✗ Error marking as deprecated: {e}")
                     return False
 
+            def _should_exclude(self, file_path: Path) -> bool:
+                """Check if a file should be excluded from sync"""
+                excluded_patterns = [
+                    '.github',      # GitHub workflows and config
+                    '.git',         # Git directory
+                    'node_modules', # Node dependencies
+                    '__pycache__',  # Python cache
+                    '.venv',        # Python virtual env
+                    'venv',         # Python virtual env
+                    '.DS_Store',    # macOS files
+                ]
+
+                # Check if any part of the path matches excluded patterns
+                path_str = str(file_path)
+                for pattern in excluded_patterns:
+                    if f'/{pattern}/' in path_str or path_str.startswith(f'{pattern}/') or f'\\{pattern}\\' in path_str:
+                        return True
+
+                return False
+
             def ensure_folder_page(self, folder_path: Path, parent_id: str) -> Optional[str]:
                 """Ensure a folder page exists for hierarchy"""
                 folder_key = str(folder_path)
