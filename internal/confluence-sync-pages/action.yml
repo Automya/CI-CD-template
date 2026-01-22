@@ -411,8 +411,11 @@ runs:
                     with open(file_path, 'r', encoding='utf-8') as f:
                         content = f.read()
 
-                    # Extract title
-                    title = self.get_page_title(file_path, content)
+                    # Extract base title (from frontmatter or filename)
+                    base_title = self.get_page_title(file_path, content)
+
+                    # Add folder prefix to title for organization
+                    title = self.get_title_with_folder_prefix(file_path, base_title)
 
                     # Convert Markdown to Confluence Storage Format
                     confluence_content = self.markdown_to_confluence(content)
@@ -421,7 +424,7 @@ runs:
                     source_comment = f'<!-- Synced from: {file_path} -->\n'
                     confluence_content = source_comment + confluence_content
 
-                    # Check if page exists
+                    # Check if page exists (search by full title with folder prefix)
                     page_id = self.find_page_by_title(SPACE_KEY, title, parent_id)
 
                     if page_id:
