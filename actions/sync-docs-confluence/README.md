@@ -140,6 +140,32 @@ docs/
       └── configuration.md  → Página "Configuration" (nivel 2, hijo de "Guides")
 ```
 
+### Sincronizar desde la Raíz del Repositorio
+
+Si quieres sincronizar todos los archivos Markdown del repositorio (no solo una carpeta específica), configura `docs_folder: '.'`:
+
+```yaml
+with:
+  docs_folder: '.'  # Sincroniza desde la raíz
+```
+
+**Carpetas excluidas automáticamente:**
+- `.github/` - Workflows y configuración de GitHub
+- `.git/` - Repositorio Git
+- `node_modules/` - Dependencias de Node.js
+- `__pycache__/`, `.venv/`, `venv/` - Archivos de Python
+- `.DS_Store` - Archivos de sistema macOS
+
+**Ejemplo de estructura:**
+```
+repo-root/
+  ├── README.md              → Página "README" (nivel 1)
+  ├── SETUP.md               → Página "SETUP" (nivel 1)
+  ├── guides/
+  │   └── quickstart.md     → Página "Quickstart" (nivel 2, hijo de "Guides")
+  └── .github/              → EXCLUIDO (no se sincroniza)
+```
+
 ### Archivos Eliminados
 
 Cuando eliminas un archivo `.md` del repositorio:

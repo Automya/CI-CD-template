@@ -245,12 +245,26 @@ labels:
 # Contenido del documento
 ```
 
+### Sincronizar desde la Raíz del Repositorio
+
+Si quieres sincronizar **todo el repositorio** en lugar de solo una carpeta, configura `docs_folder: '.'`:
+
+```yaml
+with:
+  docs_folder: '.'  # Sincroniza desde la raíz del repo
+```
+
+Esto sincronizará todos los archivos `.md` del repositorio, **excluyendo automáticamente**:
+- `.github/` - Workflows de GitHub
+- `.git/` - Repositorio Git
+- `node_modules/`, `__pycache__/`, `.venv/` - Dependencias y caches
+
 ### Estructura Recomendada
 
+**Opción 1: Carpeta docs/ dedicada (recomendado)**
 ```
 docs/
 ├── index.md              # Página principal
-├── README.md             # Información del repo (ignorada en sync)
 ├── getting-started.md    # Guía de inicio
 ├── guides/               # Guías por categoría
 │   ├── installation.md
@@ -261,6 +275,16 @@ docs/
 │   └── reference.md
 └── troubleshooting/      # Resolución de problemas
     └── common-issues.md
+```
+
+**Opción 2: Sincronizar desde la raíz**
+```
+repo-root/
+├── README.md             # Página principal
+├── SETUP.md              # Guía de instalación
+├── guides/
+│   └── quickstart.md
+└── .github/              # EXCLUIDO automáticamente
 ```
 
 ### Eliminar Documentación
