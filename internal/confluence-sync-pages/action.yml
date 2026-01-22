@@ -378,30 +378,6 @@ runs:
 
                 return False
 
-            def ensure_folder_page(self, folder_path: Path, parent_id: str) -> Optional[str]:
-                """Ensure a folder page exists for hierarchy"""
-                folder_key = str(folder_path)
-
-                # Check cache
-                if folder_key in self.folder_pages:
-                    return self.folder_pages[folder_key]
-
-                # Create folder page title from folder name
-                folder_name = folder_path.name.replace('_', ' ').replace('-', ' ').title()
-
-                # Check if page exists
-                page_id = self.find_page_by_title(SPACE_KEY, folder_name, parent_id)
-
-                if not page_id:
-                    # Create folder page
-                    body = f'<p>Esta es una página de navegación para la carpeta <strong>{folder_name}</strong>.</p>'
-                    page_id = self.create_page(SPACE_KEY, folder_name, body, parent_id)
-
-                if page_id:
-                    self.folder_pages[folder_key] = page_id
-
-                return page_id
-
             def sync_file(self, file_path: Path, parent_id: str) -> bool:
                 """Sync a single Markdown file to Confluence"""
                 try:
@@ -529,11 +505,10 @@ runs:
                     print("No files to sync")
                     return
 
-                # Sync each file
+                # Sync each file directly under the parent folder
+                # Folder hierarchy is preserved in the page title (e.g., "Guides / Installation")
                 for file_path in files_to_sync:
-                    # Determine correct parent based on file location
-                    file_parent = self.get_parent_for_file(file_path, parent_id)
-                    self.sync_file(file_path, file_parent)
+                    self.sync_file(file_path, parent_id)
 
         def main():
             """Main sync execution"""
