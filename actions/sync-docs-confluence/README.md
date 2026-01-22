@@ -119,14 +119,29 @@ jobs:
 
 ### Agregar Secrets en GitHub
 
-En tu repositorio:
+Puedes configurar los secrets a **nivel de repositorio** o a **nivel de organización** (recomendado si usas la misma configuración en múltiples repos).
 
-1. Ve a **Settings** > **Secrets and variables** > **Actions**
-2. Click en **New repository secret**
-3. Agrega los siguientes secrets:
+**Opción A: Secrets a nivel de organización (recomendado para múltiples repos)**
+
+1. Ve a tu organización en GitHub
+2. Click en **Settings** > **Secrets and variables** > **Actions**
+3. Click en **New organization secret**
+4. Agrega los siguientes secrets y selecciona los repositorios que tendrán acceso:
    - `CONFLUENCE_URL`: ej. `https://yourorg.atlassian.net/wiki`
    - `CONFLUENCE_USERNAME`: Tu email de Confluence
    - `CONFLUENCE_API_TOKEN`: El token generado arriba
+
+**Opción B: Secrets a nivel de repositorio (para un solo repo)**
+
+1. Ve a tu repositorio en GitHub
+2. Click en **Settings** > **Secrets and variables** > **Actions**
+3. Click en **New repository secret**
+4. Agrega los siguientes secrets:
+   - `CONFLUENCE_URL`: ej. `https://yourorg.atlassian.net/wiki`
+   - `CONFLUENCE_USERNAME`: Tu email de Confluence
+   - `CONFLUENCE_API_TOKEN`: El token generado arriba
+
+**Nota:** Los secrets de organización se pueden compartir entre múltiples repositorios, lo cual es ideal si tienes varios repos de documentación que sincronizan al mismo Confluence.
 
 ### Obtener el Parent Page ID
 
