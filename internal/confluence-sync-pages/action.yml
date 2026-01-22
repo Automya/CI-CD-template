@@ -544,10 +544,16 @@ runs:
                 # Initialize sync
                 sync = ConfluenceSync()
 
-                # Sync folder
-                docs_path = Path(DOCS_FOLDER)
-                if not docs_path.exists():
-                    raise Exception(f"Documentation folder not found: {DOCS_FOLDER}")
+                # Sync folder (support root directory with "." or empty string)
+                docs_folder_normalized = DOCS_FOLDER.strip()
+                if docs_folder_normalized in ('.', '', './'):
+                    docs_path = Path('.')
+                    print(f"📁 Syncing from repository root (excluding .github and system folders)")
+                else:
+                    docs_path = Path(DOCS_FOLDER)
+                    if not docs_path.exists():
+                        raise Exception(f"Documentation folder not found: {DOCS_FOLDER}")
+                    print(f"📁 Syncing from folder: {DOCS_FOLDER}")
 
                 sync.sync_folder(docs_path, PARENT_PAGE_ID)
 

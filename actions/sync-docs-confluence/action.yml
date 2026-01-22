@@ -24,7 +24,7 @@ inputs:
 
   # Source Configuration
   docs_folder:
-    description: 'Path to documentation folder in repository'
+    description: 'Path to documentation folder in repository (use "." to sync from repository root, excluding .github folder)'
     required: false
     default: 'docs'
 
