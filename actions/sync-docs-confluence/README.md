@@ -62,7 +62,7 @@ jobs:
 
 | Input | Descripción | Default |
 |-------|-------------|---------|
-| `docs_folder` | Ruta a la carpeta de documentación | `docs` |
+| `docs_folder` | Ruta a la carpeta de documentación. Usa `"."` para sincronizar desde la raíz del repositorio (excluyendo automáticamente `.github/` y carpetas de sistema) | `docs` |
 | `sync_mode` | Modo de sync: `all` (todos los archivos) o `changed` (solo modificados) | `changed` |
 | `page_title_from_frontmatter` | Extraer título desde YAML frontmatter | `true` |
 
