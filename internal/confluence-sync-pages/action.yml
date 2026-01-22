@@ -143,24 +143,57 @@ runs:
             def find_folder_by_title(self, title: str, parent_id: Optional[str] = None) -> Optional[str]:
                 """Find folder ID by title using API v2"""
                 try:
-                    # Get folders in space
-                    params = {}
+                    # Get space ID
+                    space_id = self.get_space_id(SPACE_KEY)
+                    if not space_id:
+                        return None
+
+                    # Search folders in space with pagination
+                    params = {
+                        'space-id': space_id,
+                        'limit': 250  # Max results per page
+                    }
                     if parent_id:
                         params['parent-id'] = parent_id
 
-                    response = self.session.get(
-                        f'{CONFLUENCE_URL}/api/v2/folders',
-                        params=params,
-                        timeout=30
-                    )
+                    # Get all folders (handle pagination)
+                    all_folders = []
+                    next_cursor = None
 
-                    if response.status_code == 200:
-                        results = response.json().get('results', [])
-                        for folder in results:
-                            if folder.get('title') == title:
-                                folder_id = folder['id']
-                                print(f"  Found existing folder: {title} (ID: {folder_id})")
-                                return folder_id
+                    while True:
+                        if next_cursor:
+                            params['cursor'] = next_cursor
+
+                        response = self.session.get(
+                            f'{CONFLUENCE_URL}/api/v2/folders',
+                            params=params,
+                            timeout=30
+                        )
+
+                        if response.status_code != 200:
+                            break
+
+                        data = response.json()
+                        results = data.get('results', [])
+                        all_folders.extend(results)
+
+                        # Check if there are more pages
+                        links = data.get('_links', {})
+                        if 'next' not in links:
+                            break
+
+                        # Get next cursor from response
+                        next_cursor = links.get('next', '').split('cursor=')[-1] if 'cursor=' in links.get('next', '') else None
+                        if not next_cursor:
+                            break
+
+                    # Search for folder by title
+                    for folder in all_folders:
+                        if folder.get('title') == title:
+                            folder_id = folder['id']
+                            print(f"  Found existing folder: {title} (ID: {folder_id})")
+                            return folder_id
+
                     return None
                 except Exception as e:
                     print(f"  Warning: Error searching for folder '{title}': {e}")
@@ -212,8 +245,14 @@ runs:
                 folder_id = self.find_folder_by_title(folder_title, parent_id)
 
                 if not folder_id:
-                    # Create folder
+                    # Try to create folder
                     folder_id = self.create_folder(folder_title, parent_id)
+
+                    # If creation failed with 400 (folder already exists), try to find it again
+                    # This handles race conditions and cases where the folder wasn't found initially
+                    if not folder_id:
+                        print(f"  Retrying folder search: {folder_title}")
+                        folder_id = self.find_folder_by_title(folder_title, parent_id)
 
                 # Cache the result
                 if folder_id:
