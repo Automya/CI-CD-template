@@ -143,21 +143,30 @@ Puedes configurar los secrets a **nivel de repositorio** o a **nivel de organiza
 
 **Nota:** Los secrets de organización se pueden compartir entre múltiples repositorios, lo cual es ideal si tienes varios repos de documentación que sincronizan al mismo Confluence.
 
-### Obtener el Parent Page ID
+### Obtener el Parent Folder/Page ID
 
-El Parent Page ID es el ID de la página bajo la cual se crearán todas las páginas de documentación.
+El Parent Folder ID es el ID de la carpeta o página de Confluence donde se crearán todas las páginas de documentación.
 
-**Opción 1: Desde la URL de la página**
+**Nota:** En Confluence Cloud, las carpetas son en realidad páginas especiales que actúan como contenedores.
+
+**Opción 1: Desde la URL de una carpeta**
+```
+https://yourorg.atlassian.net/wiki/spaces/DOCS/folder/81264642
+                                                      ^^^^^^^^
+                                                      Este es el ID
+```
+
+**Opción 2: Desde la URL de una página**
 ```
 https://yourorg.atlassian.net/wiki/spaces/DOCS/pages/123456789/Page+Title
                                                         ^^^^^^^^^
                                                         Este es el ID
 ```
 
-**Opción 2: Usando la API**
+**Opción 3: Usando la API**
 ```bash
 curl -u "your-email@example.com:your-api-token" \
-  "https://yourorg.atlassian.net/wiki/rest/api/content?title=Your+Page+Title&spaceKey=DOCS&expand=version"
+  "https://yourorg.atlassian.net/wiki/api/v2/pages/81264642"
 ```
 
 ## Estructura de Documentación
