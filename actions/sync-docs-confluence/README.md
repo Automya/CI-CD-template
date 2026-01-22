@@ -7,6 +7,7 @@ Action de GitHub que sincroniza automáticamente documentación Markdown desde u
 - ✅ **Sincronización automática** en push a la carpeta de documentación
 - 📁 **Jerarquía de carpetas preservada** - Las carpetas de GitHub se convierten en folders reales de Confluence
 - 🗂️ **Folders y páginas separados** - Carpetas → Confluence folders, archivos .md → páginas dentro de folders
+- 🖼️ **Soporte de imágenes** - Sube automáticamente imágenes como attachments y actualiza referencias
 - 🏷️ **Páginas deprecated** - Archivos eliminados se marcan como deprecated (no se eliminan)
 - 🔄 **Idempotencia** - Solo actualiza si el contenido cambió
 - 📝 **Soporte de frontmatter** - Extrae títulos y metadata de archivos YAML frontmatter
@@ -216,6 +217,43 @@ Parent Folder (ID: confluence_parent_page_id)
 - ✅ Fácil navegación y organización en Confluence
 - ✅ Los títulos de páginas no necesitan prefijos
 
+### Soporte de Imágenes
+
+El action sube automáticamente todas las imágenes referenciadas en tus archivos Markdown como **attachments** a Confluence y actualiza las referencias.
+
+**Formatos soportados:**
+```markdown
+# Sintaxis Markdown
+![Diagrama de arquitectura](./images/diagram.png)
+![Logo](../assets/logo.jpg)
+
+# HTML
+<img src="./images/screenshot.png" alt="Screenshot">
+```
+
+**Tipos de rutas soportados:**
+- ✅ Rutas relativas desde el archivo Markdown: `./images/diagram.png`
+- ✅ Rutas relativas al directorio padre: `../assets/logo.jpg`
+- ✅ Rutas absolutas desde la raíz del repo: `/docs/images/icon.png`
+- ⚠️ URLs externas se mantienen sin cambios: `https://example.com/image.png`
+
+**Formatos de imagen soportados:**
+- PNG, JPG/JPEG, GIF, SVG, WebP, BMP
+
+**Ejemplo de estructura:**
+```
+docs/
+  ├── index.md                    (contiene: ![Logo](./images/logo.png))
+  └── images/
+      └── logo.png               ← Se sube como attachment a la página "Index"
+```
+
+**Comportamiento:**
+1. El action detecta todas las imágenes en cada archivo `.md`
+2. Sube cada imagen como attachment a la página de Confluence
+3. Actualiza las referencias para que apunten a los attachments
+4. Si la imagen ya existe, la actualiza (no crea duplicados)
+
 ### Sincronizar desde la Raíz del Repositorio
 
 Si quieres sincronizar todos los archivos Markdown del repositorio (no solo una carpeta específica), configura `docs_folder: '.'`:
@@ -256,12 +294,14 @@ Esto previene la pérdida accidental de documentación.
 ## Cómo Funciona
 
 1. **Detección de cambios**: Compara el commit actual vs el anterior para identificar archivos `.md` modificados/eliminados
-2. **Conversión**: Convierte Markdown a Confluence Storage Format usando la librería `md2cf`
-3. **Folders**: Crea folders reales de Confluence para cada carpeta de GitHub (usando API v2)
-4. **Búsqueda**: Busca si la página ya existe en Confluence por título
-5. **Sync**: Crea o actualiza páginas dentro de los folders correspondientes
-6. **Jerarquía**: Preserva la estructura completa de carpetas
-7. **Reporte**: Genera un resumen con páginas sincronizadas y errores
+2. **Extracción de imágenes**: Detecta todas las imágenes referenciadas en cada archivo Markdown
+3. **Conversión**: Convierte Markdown a Confluence Storage Format usando la librería `md2cf`
+4. **Folders**: Crea folders reales de Confluence para cada carpeta de GitHub (usando API v2)
+5. **Búsqueda**: Busca si la página ya existe en Confluence por título
+6. **Sync**: Crea o actualiza páginas dentro de los folders correspondientes
+7. **Imágenes**: Sube imágenes como attachments y actualiza referencias en la página
+8. **Jerarquía**: Preserva la estructura completa de carpetas
+9. **Reporte**: Genera un resumen con páginas sincronizadas y errores
 
 ## Troubleshooting
 

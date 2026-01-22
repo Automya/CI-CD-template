@@ -299,6 +299,163 @@ runs:
 
                 return confluence_html
 
+            def extract_image_paths(self, markdown_content: str, file_path: Path) -> list:
+                """Extract image paths from Markdown content"""
+                import re
+
+                images = []
+
+                # Remove frontmatter first
+                _, clean_markdown = self.extract_frontmatter(markdown_content)
+
+                # Pattern for Markdown images: ![alt](path)
+                md_pattern = r'!\[([^\]]*)\]\(([^)]+)\)'
+
+                # Pattern for HTML images: <img src="path">
+                html_pattern = r'<img[^>]+src=["\']([^"\']+)["\']'
+
+                for match in re.finditer(md_pattern, clean_markdown):
+                    alt_text = match.group(1)
+                    image_path = match.group(2)
+
+                    # Skip external URLs
+                    if image_path.startswith(('http://', 'https://', '//')):
+                        continue
+
+                    images.append({
+                        'alt': alt_text,
+                        'path': image_path,
+                        'type': 'markdown'
+                    })
+
+                for match in re.finditer(html_pattern, clean_markdown):
+                    image_path = match.group(1)
+
+                    # Skip external URLs
+                    if image_path.startswith(('http://', 'https://', '//')):
+                        continue
+
+                    images.append({
+                        'alt': '',
+                        'path': image_path,
+                        'type': 'html'
+                    })
+
+                # Resolve relative paths
+                base_dir = file_path.parent
+                for img in images:
+                    img_path = Path(img['path'])
+
+                    # Handle absolute paths from repo root (starting with /)
+                    if img['path'].startswith('/'):
+                        img['absolute_path'] = Path(img['path'].lstrip('/'))
+                    else:
+                        # Relative path from markdown file location
+                        img['absolute_path'] = (base_dir / img_path).resolve()
+
+                    img['filename'] = img['absolute_path'].name
+
+                return images
+
+            def upload_attachment(self, page_id: str, file_path: Path) -> Optional[str]:
+                """Upload an image as attachment to a Confluence page"""
+                try:
+                    if not file_path.exists():
+                        print(f"  Warning: Image not found: {file_path}")
+                        return None
+
+                    # Check if attachment already exists
+                    filename = file_path.name
+                    check_response = self.session.get(
+                        f'{CONFLUENCE_URL}/rest/api/content/{page_id}/child/attachment',
+                        params={'filename': filename},
+                        timeout=30
+                    )
+
+                    # Prepare file for upload
+                    with open(file_path, 'rb') as f:
+                        files = {'file': (filename, f, self._get_mime_type(file_path))}
+
+                        # Remove Content-Type header for multipart upload
+                        headers = {k: v for k, v in self.session.headers.items() if k.lower() != 'content-type'}
+
+                        if check_response.status_code == 200 and check_response.json().get('results'):
+                            # Update existing attachment
+                            attachment_id = check_response.json()['results'][0]['id']
+                            response = self.session.post(
+                                f'{CONFLUENCE_URL}/rest/api/content/{page_id}/child/attachment/{attachment_id}/data',
+                                files=files,
+                                headers=headers,
+                                auth=self.session.auth,
+                                timeout=60
+                            )
+                        else:
+                            # Create new attachment
+                            response = self.session.post(
+                                f'{CONFLUENCE_URL}/rest/api/content/{page_id}/child/attachment',
+                                files=files,
+                                headers=headers,
+                                auth=self.session.auth,
+                                timeout=60
+                            )
+
+                    if response.status_code in (200, 201):
+                        print(f"  ✓ Uploaded image: {filename}")
+                        return filename
+                    else:
+                        print(f"  ✗ Failed to upload {filename}: {response.status_code}")
+                        return None
+
+                except Exception as e:
+                    print(f"  ✗ Error uploading {file_path}: {e}")
+                    return None
+
+            def _get_mime_type(self, file_path: Path) -> str:
+                """Get MIME type for image file"""
+                extension = file_path.suffix.lower()
+                mime_types = {
+                    '.png': 'image/png',
+                    '.jpg': 'image/jpeg',
+                    '.jpeg': 'image/jpeg',
+                    '.gif': 'image/gif',
+                    '.svg': 'image/svg+xml',
+                    '.webp': 'image/webp',
+                    '.bmp': 'image/bmp',
+                }
+                return mime_types.get(extension, 'application/octet-stream')
+
+            def update_image_references(self, confluence_html: str, images: list, uploaded_filenames: dict) -> str:
+                """Update image references in Confluence HTML to point to attachments"""
+                import re
+
+                updated_html = confluence_html
+
+                for img in images:
+                    original_path = img['path']
+                    filename = img['filename']
+
+                    # Check if image was successfully uploaded
+                    if filename not in uploaded_filenames:
+                        continue
+
+                    # Confluence attachment URL format
+                    attachment_ref = f'<ri:attachment ri:filename="{filename}" />'
+
+                    # Replace in HTML - look for the converted image tags
+                    # md2cf converts ![alt](path) to <ac:image><ri:url ri:value="path" /></ac:image>
+
+                    # Pattern 1: ri:url with the original path
+                    pattern1 = f'<ri:url ri:value="{re.escape(original_path)}"\\s*/>'
+                    replacement1 = attachment_ref
+                    updated_html = re.sub(pattern1, replacement1, updated_html)
+
+                    # Pattern 2: HTML img tags (if any remain)
+                    pattern2 = f'<img[^>]+src=["\'{re.escape(original_path)}["\'][^>]*>'
+                    replacement2 = f'<ac:image><ri:attachment ri:filename="{filename}" /></ac:image>'
+                    updated_html = re.sub(pattern2, replacement2, updated_html)
+
+                return updated_html
+
             def create_page(self, space_key: str, title: str, body: str, parent_id: str) -> Optional[str]:
                 """Create a new Confluence page"""
                 try:
@@ -516,7 +673,7 @@ runs:
                 return current_parent_id
 
             def sync_file(self, file_path: Path, root_parent_id: str) -> bool:
-                """Sync a single Markdown file to Confluence"""
+                """Sync a single Markdown file to Confluence, including images"""
                 try:
                     print(f"\nProcessing: {file_path}")
 
@@ -529,6 +686,11 @@ runs:
 
                     # Get the parent folder ID for this file (creating folders as needed)
                     parent_id = self.get_parent_folder_for_file(file_path, root_parent_id)
+
+                    # Extract image paths from Markdown
+                    images = self.extract_image_paths(content, file_path)
+                    if images:
+                        print(f"  Found {len(images)} image(s) to upload")
 
                     # Convert Markdown to Confluence Storage Format
                     confluence_content = self.markdown_to_confluence(content)
@@ -548,24 +710,48 @@ runs:
                         page_id = self.create_page(SPACE_KEY, title, confluence_content, parent_id)
                         success = page_id is not None
 
-                    if success:
-                        # Get page URL
-                        page_url = f"{CONFLUENCE_URL}/pages/viewpage.action?pageId={page_id}"
-
-                        synced_pages.append({
-                            'file': str(file_path),
-                            'title': title,
-                            'page_id': page_id,
-                            'url': page_url
-                        })
-
-                        return True
-                    else:
+                    if not success:
                         failed_pages.append({
                             'file': str(file_path),
                             'error': 'Failed to create/update page'
                         })
                         return False
+
+                    # Upload images as attachments and update references
+                    if images and page_id:
+                        print(f"  Uploading images...")
+                        uploaded_filenames = {}
+
+                        for img in images:
+                            img_path = img['absolute_path']
+                            filename = self.upload_attachment(page_id, img_path)
+                            if filename:
+                                uploaded_filenames[filename] = True
+
+                        # Update page content with correct attachment references
+                        if uploaded_filenames:
+                            updated_content = self.update_image_references(
+                                confluence_content,
+                                images,
+                                uploaded_filenames
+                            )
+
+                            # Update page again with corrected image references
+                            if updated_content != confluence_content:
+                                print(f"  Updating page with image references...")
+                                self.update_page(page_id, title, updated_content)
+
+                    # Get page URL
+                    page_url = f"{CONFLUENCE_URL}/pages/viewpage.action?pageId={page_id}"
+
+                    synced_pages.append({
+                        'file': str(file_path),
+                        'title': title,
+                        'page_id': page_id,
+                        'url': page_url
+                    })
+
+                    return True
 
                 except Exception as e:
                     error_msg = f"Failed to sync {file_path}: {str(e)}"
