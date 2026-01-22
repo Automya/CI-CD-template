@@ -13,7 +13,7 @@ Action de GitHub que sincroniza automáticamente documentación Markdown desde u
 
 ## Uso
 
-### Ejemplo Básico
+### Ejemplo Básico (carpeta docs/)
 
 ```yaml
 name: Sync Docs to Confluence
@@ -42,6 +42,40 @@ jobs:
           confluence_space_key: 'DOCS'
           confluence_parent_page_id: '123456789'
           docs_folder: 'docs'
+          sync_mode: 'changed'
+          page_title_from_frontmatter: 'true'
+```
+
+### Ejemplo: Sincronizar desde la raíz del repositorio
+
+```yaml
+name: Sync All Markdown to Confluence
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '**.md'
+      - '!.github/**'  # Excluir workflows
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync-all-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync to Confluence
+        uses: Automya/CI-CD-template/actions/sync-docs-confluence@main
+        with:
+          confluence_url: ${{ secrets.CONFLUENCE_URL }}
+          confluence_username: ${{ secrets.CONFLUENCE_USERNAME }}
+          confluence_api_token: ${{ secrets.CONFLUENCE_API_TOKEN }}
+          confluence_space_key: 'DOCS'
+          confluence_parent_page_id: '123456789'
+          docs_folder: '.'  # Sincroniza desde la raíz
           sync_mode: 'changed'
           page_title_from_frontmatter: 'true'
 ```
