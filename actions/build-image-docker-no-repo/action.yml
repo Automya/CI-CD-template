@@ -16,6 +16,10 @@ inputs:
   service_account:
     description: "GCP Service Account email"
     required: true
+  build_args:
+    description: "Docker build arguments in KEY=value format, one per line"
+    required: false
+    default: ""
   google_chat_webhook:
     description: "Google Chat Webhook URL for notifications"
     required: false
@@ -46,6 +50,7 @@ runs:
       with:
         workload_identity_provider: ${{ inputs.workload_identity_provider }}
         service_account: ${{ inputs.service_account }}
+        build_args: ${{ inputs.build_args }}
         google_chat_webhook: ${{ inputs.google_chat_webhook }}
         cache_enabled: ${{ inputs.cache_enabled }}
         gitops_repo: ${{ inputs.gitops_repo }}
