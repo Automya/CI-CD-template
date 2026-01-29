@@ -1,7 +1,7 @@
 name: "GCP Docker Build & Push (Frontend)"
 description: |
   Builds and pushes Docker images to GCP Artifact Registry with Maven credentials and GitOps.
-  Optimized for frontend builds with DEV tag restriction. Supports PR comments and issue comments (use 'build -b <branch>' for issues).
+  Optimized for frontend builds. Allows DEV tags and semantic versioning on main and DEV branches. Supports PR comments and issue comments (use 'build -b <branch>' for issues).
 
   REQUIRED WORKFLOW PERMISSIONS for issue_comment trigger:
     permissions:
@@ -50,7 +50,7 @@ runs:
         container_name: ${{ inputs.container_name }}
         google_chat_webhook: ${{ inputs.google_chat_webhook }}
         cache_enabled: ${{ inputs.cache_enabled }}
-        allowed_tags: "DEV,dev"
+        allowed_tags: "DEV,dev,SEMVER"
         build_args: |
           MAVEN_USERNAME=${{ env.MAVEN_USERNAME }}
           MAVEN_PASSWORD=${{ env.MAVEN_PASSWORD }}
