@@ -142,15 +142,13 @@ runs:
                fi
              fi
            elif [[ "$BRANCH" != "main" && -n "$PR_TAG" ]]; then
-             # For non-main branches, check semver restriction
-             # If SEMVER is in allowed_tags, permit all semver tags
+             # For non-main branches, only restrict semver tags
+             # Semver tags require explicit permission (SEMVER in allowed_tags for DEV branch)
+             # Non-semver tags are always allowed (branch names, feature tags, etc.)
              if is_semver "$PR_TAG"; then
                if ! is_semver_allowed && ! is_allowed_tag "$PR_TAG"; then
                  LOGICAL_STATUS="invalid_tag_branch"
                fi
-             elif ! is_allowed_tag "$PR_TAG"; then
-               # Non-semver tag must be in allowed list
-               LOGICAL_STATUS="invalid_tag_branch"
              fi
            fi
 
