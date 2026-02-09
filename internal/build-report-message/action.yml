@@ -37,7 +37,7 @@ runs:
           "not_build_command") PR_MSG="❌ Error: Comando inválido.";;
           "error_branch_unknown") PR_MSG="❌ Error: No se pudo determinar la rama origen.";;
           "invalid_tag_main") PR_MSG="❌ Error: Solo tags semánticos en main.";;
-          "invalid_tag_branch") PR_MSG="❌ Error: Tags semánticos solo en main.";;
+          "invalid_tag_branch") PR_MSG="❌ Error: Tags semánticos (vX.Y.Z) no permitidos en esta rama.";;
           "invalid_release_branch") PR_MSG="❌ Error: Release con tag no apunta a main.";;
           "not_supported_event") PR_MSG="❌ Error: Tipo de evento no soportado.";;
           "build_failed") 
