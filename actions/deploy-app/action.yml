@@ -1,7 +1,8 @@
 name: Deploy GitOps Image
 description: |
-  Updates image tag in GitOps repo (staging or prod) via command `deploy -t <tag> -e <env>`
+  Updates image tag in GitOps repo (staging or prod) via command `deploy -t <tag> -e <env> [-r <deployment|cronjob>]`
   from PR or issue comments. Creates automatic PR in GitOps repository.
+  Supports Deployments (default, with rollout restart) and CronJobs (PR only, no restart).
 
   REQUIRED WORKFLOW PERMISSIONS for issue_comment trigger:
     permissions:
@@ -86,6 +87,7 @@ runs:
         env_raw: ${{ steps.parse.outputs.env }}
         is_valid_command: ${{ steps.parse.outputs.is_valid }}
         error_msg: ${{ steps.parse.outputs.error_msg }}
+        resource_type_raw: ${{ steps.parse.outputs.resource_type }}
 
     - name: Notify Start Deployment
       if: ${{ steps.ctx.outputs.skip == 'false' && steps.ctx.outputs.stop_execution == 'false' }}
@@ -131,9 +133,10 @@ runs:
         image_tag: ${{ steps.ctx.outputs.deploy_tag }}
         target_env: ${{ steps.ctx.outputs.target_env }}
         base_branch: ${{ inputs.base_branch }}
+        resource_type: ${{ steps.ctx.outputs.resource_type }}
 
     - name: Get GKE credentials (Staging)
-      if: ${{ steps.ctx.outputs.skip == 'false' && steps.ctx.outputs.stop_execution == 'false' && steps.gitops.outputs.needs_restart == 'true' && steps.ctx.outputs.target_env == 'staging' }}
+      if: ${{ steps.ctx.outputs.skip == 'false' && steps.ctx.outputs.stop_execution == 'false' && steps.gitops.outputs.needs_restart == 'true' && steps.ctx.outputs.target_env == 'staging' && steps.ctx.outputs.resource_type != 'cronjob' }}
       uses: google-github-actions/get-gke-credentials@v2
       with:
         cluster_name: ${{ inputs.staging_cluster_name }}
@@ -141,7 +144,7 @@ runs:
         project_id: ${{ inputs.project_id }}
 
     - name: Get GKE credentials (Prod)
-      if: ${{ steps.ctx.outputs.skip == 'false' && steps.ctx.outputs.stop_execution == 'false' && steps.gitops.outputs.needs_restart == 'true' && steps.ctx.outputs.target_env == 'prod' }}
+      if: ${{ steps.ctx.outputs.skip == 'false' && steps.ctx.outputs.stop_execution == 'false' && steps.gitops.outputs.needs_restart == 'true' && steps.ctx.outputs.target_env == 'prod' && steps.ctx.outputs.resource_type != 'cronjob' }}
       uses: google-github-actions/get-gke-credentials@v2
       with:
         cluster_name: ${{ inputs.prod_cluster_name }}
@@ -149,7 +152,7 @@ runs:
         project_id: ${{ inputs.project_id }}
 
     - name: Restart Deployment
-      if: ${{ steps.ctx.outputs.skip == 'false' && steps.ctx.outputs.stop_execution == 'false' && steps.gitops.outputs.needs_restart == 'true' }}
+      if: ${{ steps.ctx.outputs.skip == 'false' && steps.ctx.outputs.stop_execution == 'false' && steps.gitops.outputs.needs_restart == 'true' && steps.ctx.outputs.resource_type != 'cronjob' }}
       id: restart
       uses: Automya/CI-CD-template/internal/k8s-rollout-restart@main
       with:
@@ -167,6 +170,7 @@ runs:
         target_env: ${{ steps.ctx.outputs.target_env }}
         needs_restart: ${{ steps.gitops.outputs.needs_restart }}
         restart_success: ${{ steps.restart.outputs.success }}
+        resource_type: ${{ steps.ctx.outputs.resource_type }}
         error_file_path: ${{ github.workspace }}/action_error.txt
 
     - name: Notify Final Result

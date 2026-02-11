@@ -13,6 +13,9 @@ inputs:
   error_msg:
     description: "Error message from parser"
     required: false
+  resource_type_raw:
+    description: "Parsed resource type"
+    required: false
 
 outputs:
   deploy_tag:
@@ -27,6 +30,9 @@ outputs:
   skip:
     description: "True if workflow should skip"
     value: ${{ steps.validate.outputs.skip }}
+  resource_type:
+    description: "The validated resource type (deployment or cronjob)"
+    value: ${{ steps.validate.outputs.resource_type }}
 
 runs:
   using: "composite"
@@ -39,6 +45,7 @@ runs:
         ENV_RAW: ${{ inputs.env_raw }}
         IS_VALID: ${{ inputs.is_valid_command }}
         ERR_MSG: ${{ inputs.error_msg }}
+        RT_RAW: ${{ inputs.resource_type_raw }}
       run: |
         # Default outputs
         echo "stop_execution=false" >> "$GITHUB_OUTPUT"
@@ -52,7 +59,7 @@ runs:
             exit 0
           else
             echo "Error de sintaxis: El comando no cumple el formato requerido." > "$GITHUB_WORKSPACE/action_error.txt"
-            echo "Uso correcto: \`deploy -t <tag> -e <staging|prod>\`" >> "$GITHUB_WORKSPACE/action_error.txt"
+            echo "Uso correcto: \`deploy -t <tag> -e <staging|prod> [-r <deployment|cronjob>]\`" >> "$GITHUB_WORKSPACE/action_error.txt"
             exit 1
           fi
         fi
@@ -85,9 +92,26 @@ runs:
             ;;
         esac
 
+        # 4. Validate resource type (default: deployment)
+        RT_LOWER=$(echo "${RT_RAW:-deployment}" | tr '[:upper:]' '[:lower:]')
+        case "$RT_LOWER" in
+          deployment|deploy)
+            RESOURCE_TYPE="deployment"
+            ;;
+          cronjob|cron)
+            RESOURCE_TYPE="cronjob"
+            ;;
+          *)
+            echo "Error: Tipo de recurso '$RT_RAW' no es válido." > "$GITHUB_WORKSPACE/action_error.txt"
+            echo "Tipos permitidos: deployment, cronjob." >> "$GITHUB_WORKSPACE/action_error.txt"
+            exit 1
+            ;;
+        esac
+
         echo "deploy_tag=$TAG" >> "$GITHUB_OUTPUT"
         echo "target_env=$TARGET_ENV" >> "$GITHUB_OUTPUT"
-        
+        echo "resource_type=$RESOURCE_TYPE" >> "$GITHUB_OUTPUT"
+
         # Export env vars for subsequent steps if needed, though outputs are preferred
         echo "DEPLOY_TAG=$TAG" >> "$GITHUB_ENV"
         echo "TARGET_ENV=$TARGET_ENV" >> "$GITHUB_ENV"

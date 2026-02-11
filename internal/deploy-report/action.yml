@@ -19,6 +19,10 @@ inputs:
   restart_success:
     description: "Whether the restart was successful"
     required: false
+  resource_type:
+    description: "K8s resource type (deployment or cronjob)"
+    required: false
+    default: "deployment"
   error_file_path:
     description: "Path to error file"
     required: false
@@ -42,6 +46,7 @@ runs:
         TARGET_ENV: ${{ inputs.target_env }}
         NEEDS_RESTART: ${{ inputs.needs_restart }}
         RESTART_SUCCESS: ${{ inputs.restart_success }}
+        RESOURCE_TYPE: ${{ inputs.resource_type }}
         ERRFILE: ${{ inputs.error_file_path }}
       with:
         script: |
@@ -59,6 +64,8 @@ runs:
           const deployTag = process.env.DEPLOY_TAG || '(tag no disponible)';
           const targetEnv = process.env.TARGET_ENV || '(entorno no disponible)';
           const jobStatus = process.env.JOB_STATUS;
+          const resourceType = process.env.RESOURCE_TYPE || 'deployment';
+          const isCronjob = resourceType === 'cronjob';
 
           let body = '';
           if (hasError) {
@@ -70,15 +77,19 @@ runs:
           } else if (prUrl) {
             body = '✅ Tag "' + deployTag + '" desplegado en "' + targetEnv + '".\n' +
               'PR en GitOps: ' + prUrl + '\n';
+            if (isCronjob) body += 'El próximo Job scheduled usará la nueva imagen.';
           } else if (process.env.NEEDS_RESTART === 'true') {
-             if (process.env.RESTART_SUCCESS === 'true') {
+             if (isCronjob) {
+                body = '✅ Tag "' + deployTag + '" ya existía en "' + targetEnv + '".\n' +
+                       'No se requiere acción — el CronJob ya usa esta imagen.';
+             } else if (process.env.RESTART_SUCCESS === 'true') {
                 body = '✅ Tag "' + deployTag + '" ya existía en "' + targetEnv + '".\n' +
                        'Se ha reiniciado el deployment exitosamente.';
              } else {
                 body = '❌ Tag "' + deployTag + '" ya existía, pero falló el reinicio.';
              }
           } else {
-            body = '✅Tag "' + deployTag + '" ya estaba aplicado en "' + targetEnv + '".\n';
+            body = '✅ Tag "' + deployTag + '" ya estaba aplicado en "' + targetEnv + '".\n';
           }
 
           core.setOutput('message', body);

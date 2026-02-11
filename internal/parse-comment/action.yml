@@ -22,6 +22,9 @@ outputs:
   branch:
     description: "Extracted branch (-b)"
     value: ${{ steps.parse.outputs.branch }}
+  resource_type:
+    description: "Extracted resource type (-r)"
+    value: ${{ steps.parse.outputs.resource_type }}
   is_valid:
     description: "True if command format is valid"
     value: ${{ steps.parse.outputs.is_valid }}
@@ -62,15 +65,18 @@ runs:
         TAG=""
         ENV=""
         BRANCH=""
+        RESOURCE_TYPE=""
 
         [[ "$CLEAN_BODY" =~ -t[[:space:]]+([^\ ]+) ]] && TAG="${BASH_REMATCH[1]}"
         [[ "$CLEAN_BODY" =~ -e[[:space:]]+([^\ ]+) ]] && ENV="${BASH_REMATCH[1]}"
         [[ "$CLEAN_BODY" =~ -b[[:space:]]+([^\ ]+) ]] && BRANCH="${BASH_REMATCH[1]}"
+        [[ "$CLEAN_BODY" =~ -r[[:space:]]+([^\ ]+) ]] && RESOURCE_TYPE="${BASH_REMATCH[1]}"
 
         # Output results
         echo "action=$PREFIX" >> "$GITHUB_OUTPUT"
         echo "tag=$TAG" >> "$GITHUB_OUTPUT"
         echo "env=$ENV" >> "$GITHUB_OUTPUT"
         echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+        echo "resource_type=$RESOURCE_TYPE" >> "$GITHUB_OUTPUT"
         echo "is_valid=true" >> "$GITHUB_OUTPUT"
 

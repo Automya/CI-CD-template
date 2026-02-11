@@ -24,6 +24,10 @@ inputs:
     description: "Target environment (staging/prod) for branch naming"
     required: false
     default: "prod"
+  resource_type:
+    description: "K8s resource type (deployment or cronjob)"
+    required: false
+    default: "deployment"
 
 outputs:
   pr_url:
@@ -54,6 +58,7 @@ runs:
         FILE: ${{ inputs.manifest_path }}
         CONTAINER: ${{ inputs.container_name }}
         TAG: ${{ inputs.image_tag }}
+        RESOURCE_TYPE: ${{ inputs.resource_type }}
       run: |
         set -euo pipefail
         
@@ -62,7 +67,14 @@ runs:
           exit 1
         fi
 
-        CURRENT_IMAGE=$(yq eval ".spec.template.spec.containers[] | select(.name == \"$CONTAINER\") | .image" "$FILE" | head -n 1)
+        # Determine yq path based on resource type
+        if [ "$RESOURCE_TYPE" = "cronjob" ]; then
+          YQ_PATH=".spec.jobTemplate.spec.template.spec.containers[]"
+        else
+          YQ_PATH=".spec.template.spec.containers[]"
+        fi
+
+        CURRENT_IMAGE=$(yq eval "$YQ_PATH | select(.name == \"$CONTAINER\") | .image" "$FILE" | head -n 1)
 
         if [ -z "$CURRENT_IMAGE" ] || [ "$CURRENT_IMAGE" = "null" ]; then
            echo "❌ Error: No se encontró el contenedor '$CONTAINER' en '$FILE'"
@@ -79,7 +91,7 @@ runs:
         fi
 
         echo "Updating $CONTAINER to $NEW_IMAGE"
-        yq eval -i "(.spec.template.spec.containers[] | select(.name == \"$CONTAINER\").image) = \"$NEW_IMAGE\"" "$FILE"
+        yq eval -i "($YQ_PATH | select(.name == \"$CONTAINER\").image) = \"$NEW_IMAGE\"" "$FILE"
         echo "needs_restart=false" >> "$GITHUB_OUTPUT"
 
     - name: Create PR

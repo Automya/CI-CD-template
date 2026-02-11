@@ -24,7 +24,7 @@ The docker build actions follow a composition pattern:
 ### Key Workflows
 
 1. **Build Flow**: PR comment triggers (`build -b <branch> -t <tag>`) → parse comment → checkout → GCP auth → Docker build/push → notify
-2. **Deploy Flow**: PR comment triggers (`deploy -t <tag> -e <env>`) → parse → GitOps PR → K8s rollout restart → notify
+2. **Deploy Flow**: PR comment triggers (`deploy -t <tag> -e <env> [-r <deployment|cronjob>]`) → parse → GitOps PR → K8s rollout restart (skipped for CronJobs) → notify
 3. **Sync Config Flow**: PR comment triggers (`sync -b <branch> -e <env>`) → update ConfigMap in GitOps repo → create PR
 
 ### Environment Variables Convention
@@ -48,7 +48,7 @@ GCP credentials are NOT hardcoded. Consuming workflows must provide:
 | `build-image-docker-gcp` | Docker build with GitOps integration (wrapper) |
 | `build-image-docker-no-repo` | Docker build without GitOps (wrapper) |
 | `build-image-docker-automya-front` | Frontend build with DEV tag restriction (wrapper) |
-| `deploy-app` | GitOps deployment with K8s rollout restart |
+| `deploy-app` | GitOps deployment with K8s rollout restart. Supports Deployments (default) and CronJobs via `-r cronjob` flag |
 | `sync-config` | Sync config files to GitOps ConfigMaps |
 | `java-test` | Run Gradle tests |
 | `npm-test` | Run npm tests |
@@ -66,12 +66,12 @@ GCP credentials are NOT hardcoded. Consuming workflows must provide:
 | `deploy-context-init` | Initialize deployment context |
 | `deploy-report` | Generate deployment report messages |
 | `deploy-select-manifest` | Select correct manifest path for deployment |
-| `deploy-validate-context` | Validate deployment parameters |
+| `deploy-validate-context` | Validate deployment parameters (env, tag, resource type) |
 | `docker-build-push` | Docker build and push (no eval, uses arrays) |
-| `gitops-pr` | Update manifest and create GitOps PR |
+| `gitops-pr` | Update manifest and create GitOps PR (supports Deployment and CronJob yq paths) |
 | `k8s-rollout-restart` | Kubernetes rollout restart |
 | `notify` | PR comments and Google Chat notifications (uses jq for JSON) |
-| `parse-comment` | Parse PR comment commands |
+| `parse-comment` | Parse PR comment commands (supports `-t`, `-e`, `-b`, `-r` flags) |
 | `setup-gcp` | GCP authentication with Workload Identity Federation |
 | `setup-java-gradle` | Java and Gradle environment setup |
 | `setup-yq` | Cross-platform yq installation |
