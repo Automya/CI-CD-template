@@ -41,6 +41,10 @@ inputs:
   container_name:
     description: "Container name in Kubernetes deployment"
     required: false
+  resource_type:
+    description: "K8s resource type for GitOps manifest update (deployment or cronjob)"
+    required: false
+    default: "deployment"
 
 runs:
   using: "composite"
@@ -57,3 +61,4 @@ runs:
         prod_manifest_path: ${{ inputs.prod_manifest_path }}
         gitops_token: ${{ inputs.gitops_token }}
         container_name: ${{ inputs.container_name }}
+        resource_type: ${{ inputs.resource_type }}

@@ -35,6 +35,10 @@ inputs:
     description: "Enable Docker layer caching (uses GCP Artifact Registry)"
     required: false
     default: "false"
+  resource_type:
+    description: "K8s resource type for GitOps manifest update (deployment or cronjob)"
+    required: false
+    default: "deployment"
 
 runs:
   using: "composite"
@@ -50,6 +54,7 @@ runs:
         container_name: ${{ inputs.container_name }}
         google_chat_webhook: ${{ inputs.google_chat_webhook }}
         cache_enabled: ${{ inputs.cache_enabled }}
+        resource_type: ${{ inputs.resource_type }}
         allowed_tags: "DEV,dev,SEMVER"
         build_args: |
           MAVEN_USERNAME=${{ env.MAVEN_USERNAME }}

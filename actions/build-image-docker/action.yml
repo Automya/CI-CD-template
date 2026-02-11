@@ -42,6 +42,12 @@ inputs:
     description: "Container name to update in manifest (defaults to IMAGE_NAME env var)"
     required: false
 
+  # Resource type
+  resource_type:
+    description: "K8s resource type for GitOps manifest update (deployment or cronjob)"
+    required: false
+    default: "deployment"
+
   # Notifications
   google_chat_webhook:
     description: "Google Chat Webhook URL for notifications"
@@ -122,6 +128,7 @@ runs:
         container_name: ${{ inputs.container_name || env.IMAGE_NAME }}
         image_tag: ${{ steps.ctx.outputs.tag }}
         target_env: "prod"
+        resource_type: ${{ inputs.resource_type }}
 
     - name: Prepare Report
       if: github.event_name == 'issue_comment'
