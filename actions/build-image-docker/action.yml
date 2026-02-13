@@ -48,6 +48,12 @@ inputs:
     required: false
     default: "deployment"
 
+  # Release branch
+  release_branch:
+    description: "Branch allowed for release events (default: main). Set to the repo's main branch if different (e.g., 'dev')."
+    required: false
+    default: "main"
+
   # Notifications
   google_chat_webhook:
     description: "Google Chat Webhook URL for notifications"
@@ -94,6 +100,7 @@ runs:
         parsed_tag: ${{ steps.parse.outputs.tag }}
         github_token: ${{ env.GH_TOKEN }}
         allowed_tags: ${{ inputs.allowed_tags }}
+        release_branch: ${{ inputs.release_branch }}
 
     - name: Checkout code
       if: steps.ctx.outputs.branch != ''

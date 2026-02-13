@@ -21,6 +21,10 @@ inputs:
     description: "Comma-separated list of additional allowed tags (case-insensitive, e.g., 'DEV,dev'). Use 'SEMVER' to allow semantic versioning on DEV branch (e.g., 'DEV,SEMVER'). Semver is always allowed on main branch."
     required: false
     default: ""
+  release_branch:
+    description: "Branch allowed for release events (default: main). Set to the repo's main branch if different."
+    required: false
+    default: "main"
 
 outputs:
   branch:
@@ -52,6 +56,7 @@ runs:
         PR_TAG: ${{ inputs.parsed_tag }}
         GH_TOKEN: ${{ inputs.github_token }}
         ALLOWED_TAGS: ${{ inputs.allowed_tags }}
+        RELEASE_BRANCH: ${{ inputs.release_branch }}
       run: |
         TAG=""
         BRANCH=""
@@ -155,7 +160,7 @@ runs:
         elif [[ "$EVENT" == "release" ]]; then
            TAG="${{ github.event.release.tag_name }}"
            BRANCH="${{ github.event.release.target_commitish }}"
-           if [[ "$BRANCH" != "main" ]]; then LOGICAL_STATUS="invalid_release_branch"; fi
+           if [[ "$BRANCH" != "$RELEASE_BRANCH" ]]; then LOGICAL_STATUS="invalid_release_branch"; fi
         else
            LOGICAL_STATUS="not_supported_event"
         fi

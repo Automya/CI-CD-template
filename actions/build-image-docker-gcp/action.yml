@@ -39,6 +39,10 @@ inputs:
     description: "K8s resource type for GitOps manifest update (deployment or cronjob)"
     required: false
     default: "deployment"
+  release_branch:
+    description: "Branch allowed for release events (default: main)"
+    required: false
+    default: "main"
 
 runs:
   using: "composite"
@@ -55,6 +59,7 @@ runs:
         google_chat_webhook: ${{ inputs.google_chat_webhook }}
         cache_enabled: ${{ inputs.cache_enabled }}
         resource_type: ${{ inputs.resource_type }}
+        release_branch: ${{ inputs.release_branch }}
         build_args: |
           MAVEN_USERNAME=${{ env.MAVEN_USERNAME }}
           MAVEN_PASSWORD=${{ env.MAVEN_PASSWORD }}
