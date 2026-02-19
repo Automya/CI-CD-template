@@ -1,0 +1,189 @@
+---
+# Playbook: Deploy SmartFridge
+# Description: Deploy SmartFridge application to vending machines.
+#   Backs up existing files, updates config, deploys JAR and certificate,
+#   then restarts the smartfridge systemd service.
+# Requirements:
+#   - Ansible 2.10+
+#   - Run from sistemas-sp as root (sudo ansible-playbook ...)
+#   - Target hosts: Ubuntu 24.04 (vending machines via VPN B)
+# Variables:
+#   - jar_source: Path to new SmartFridge.jar (required)
+#   - cert_source: Path to new smartvending.client.truststore.jks (required)
+#   - new_broker_line: Line to add after Kafka broker config block (required)
+# Usage:
+#   sudo ansible-playbook -i inventory/vending.ini deploy_smartfridge.yml \
+#     -e "jar_source=/tmp/SmartFridge.jar" \
+#     -e "cert_source=/tmp/smartvending.client.truststore.jks" \
+#     -e "new_broker_line=smartfridge.broker.newProperty=value"
+#
+#   # Dry-run (no changes):
+#   sudo ansible-playbook -i inventory/vending.ini deploy_smartfridge.yml \
+#     -e "jar_source=/tmp/SmartFridge.jar" \
+#     -e "cert_source=/tmp/smartvending.client.truststore.jks" \
+#     -e "new_broker_line=smartfridge.broker.newProperty=value" \
+#     --check
+#
+#   # Target specific machines:
+#   sudo ansible-playbook -i inventory/vending.ini deploy_smartfridge.yml \
+#     -e "jar_source=/tmp/SmartFridge.jar" \
+#     -e "cert_source=/tmp/smartvending.client.truststore.jks" \
+#     -e "new_broker_line=smartfridge.broker.newProperty=value" \
+#     --limit "v0001b,v0002b"
+
+- name: Deploy SmartFridge to vending machines
+  hosts: vending
+  become: true
+  gather_facts: false
+  serial: 1
+
+  vars:
+    smartfridge_dir: /opt/smartfridge
+    jar_file: SmartFridge.jar
+    cert_file: smartvending.client.truststore.jks
+    config_file: application.properties
+    backup_suffix: "{{ lookup('pipe', 'date +%Y%m%d') }}"
+
+  pre_tasks:
+    - name: Validate required variables are provided
+      ansible.builtin.assert:
+        that:
+          - jar_source is defined and jar_source | length > 0
+          - cert_source is defined and cert_source | length > 0
+          - new_broker_line is defined and new_broker_line | length > 0
+        fail_msg: >-
+          Required variables missing. Provide: jar_source, cert_source, new_broker_line.
+          Example: -e "jar_source=/tmp/SmartFridge.jar"
+      tags:
+        - always
+
+    - name: Verify SmartFridge directory exists
+      ansible.builtin.stat:
+        path: "{{ smartfridge_dir }}/{{ jar_file }}"
+      register: jar_stat
+
+    - name: Fail if SmartFridge is not installed
+      ansible.builtin.fail:
+        msg: "SmartFridge not found at {{ smartfridge_dir }}/{{ jar_file }}"
+      when: not jar_stat.stat.exists
+
+  tasks:
+    # =========================================================================
+    # STEP 1: BACKUP existing files
+    # =========================================================================
+    - name: Backup application.properties
+      ansible.builtin.copy:
+        src: "{{ smartfridge_dir }}/{{ config_file }}"
+        dest: "{{ smartfridge_dir }}/{{ config_file }}.{{ backup_suffix }}"
+        remote_src: true
+        owner: smartfridge
+        group: smartfridge
+        mode: preserve
+      tags:
+        - backup
+
+    - name: Backup SmartFridge.jar
+      ansible.builtin.copy:
+        src: "{{ smartfridge_dir }}/{{ jar_file }}"
+        dest: "{{ smartfridge_dir }}/{{ jar_file }}.{{ backup_suffix }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: preserve
+      tags:
+        - backup
+
+    - name: Backup Kafka truststore certificate
+      ansible.builtin.copy:
+        src: "{{ smartfridge_dir }}/{{ cert_file }}"
+        dest: "{{ smartfridge_dir }}/{{ cert_file }}.{{ backup_suffix }}"
+        remote_src: true
+        owner: smartfridge
+        group: smartfridge
+        mode: preserve
+      tags:
+        - backup
+
+    # =========================================================================
+    # STEP 2: ADD LINE to application.properties after broker config block
+    # =========================================================================
+    - name: Check if new broker line already exists
+      ansible.builtin.shell:
+        cmd: grep -cF '{{ new_broker_line }}' {{ smartfridge_dir }}/{{ config_file }}
+      register: broker_line_check
+      changed_when: false
+      failed_when: false
+      tags:
+        - configure
+
+    - name: Add new broker configuration line after Kafka block
+      ansible.builtin.shell:
+        cmd: >-
+          sed -i '/^smartfridge\.broker\.reconnectBackoffMaxMs=/a {{ new_broker_line }}'
+          {{ smartfridge_dir }}/{{ config_file }}
+      when: broker_line_check.stdout | int == 0
+      changed_when: true
+      tags:
+        - configure
+
+    # =========================================================================
+    # STEP 3: DEPLOY new SmartFridge.jar
+    # =========================================================================
+    - name: Deploy new SmartFridge.jar
+      ansible.builtin.copy:
+        src: "{{ jar_source }}"
+        dest: "{{ smartfridge_dir }}/{{ jar_file }}"
+        owner: root
+        group: root
+        mode: '0644'
+      tags:
+        - deploy
+
+    # =========================================================================
+    # STEP 4: DEPLOY new Kafka certificate
+    # =========================================================================
+    - name: Deploy new Kafka truststore certificate
+      ansible.builtin.copy:
+        src: "{{ cert_source }}"
+        dest: "{{ smartfridge_dir }}/{{ cert_file }}"
+        owner: smartfridge
+        group: smartfridge
+        mode: '0644'
+      tags:
+        - deploy
+
+    # =========================================================================
+    # STEP 5: STOP service
+    # =========================================================================
+    - name: Stop SmartFridge service
+      ansible.builtin.shell:
+        cmd: systemctl stop smartfridge
+      changed_when: true
+      tags:
+        - service
+
+    - name: Wait for service to fully stop
+      ansible.builtin.pause:
+        seconds: 3
+      tags:
+        - service
+
+    # =========================================================================
+    # STEP 6: START service
+    # =========================================================================
+    - name: Start SmartFridge service
+      ansible.builtin.shell:
+        cmd: systemctl start smartfridge
+      changed_when: true
+      tags:
+        - service
+
+  post_tasks:
+    - name: Verify SmartFridge service is running
+      ansible.builtin.shell:
+        cmd: systemctl is-active smartfridge
+      register: sf_service
+      changed_when: false
+      failed_when: sf_service.stdout != "active"
+      tags:
+        - verify
