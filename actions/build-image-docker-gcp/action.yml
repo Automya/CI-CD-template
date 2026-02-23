@@ -34,7 +34,7 @@ inputs:
   cache_enabled:
     description: "Enable Docker layer caching (uses GCP Artifact Registry)"
     required: false
-    default: "false"
+    default: "true"
   resource_type:
     description: "K8s resource type for GitOps manifest update (deployment or cronjob)"
     required: false
