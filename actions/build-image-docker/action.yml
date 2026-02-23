@@ -116,13 +116,34 @@ runs:
         service_account: ${{ inputs.service_account }}
         region: ${{ env.GCP_REGION }}
 
+    - name: Prepare Build Args
+      if: steps.ctx.outputs.status == ''
+      id: build-args
+      shell: bash
+      run: |
+        BUILD_ARGS="${{ inputs.build_args }}"
+        
+        # Add VERSION build arg for releases
+        if [[ "${{ github.event_name }}" == "release" ]]; then
+          VERSION="${{ steps.ctx.outputs.tag }}"
+          if [[ -n "$BUILD_ARGS" ]]; then
+            BUILD_ARGS="${BUILD_ARGS}"$'\n'"VERSION=${VERSION}"
+          else
+            BUILD_ARGS="VERSION=${VERSION}"
+          fi
+        fi
+        
+        echo "build_args<<EOF" >> "$GITHUB_OUTPUT"
+        echo "$BUILD_ARGS" >> "$GITHUB_OUTPUT"
+        echo "EOF" >> "$GITHUB_OUTPUT"
+
     - name: Build and Push
       if: steps.ctx.outputs.status == ''
       id: build
       uses: Automya/CI-CD-template/internal/docker-build-push@main
       with:
         image_full_name: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ steps.ctx.outputs.tag }}
-        build_args: ${{ inputs.build_args }}
+        build_args: ${{ steps.build-args.outputs.build_args }}
         cache_enabled: ${{ inputs.cache_enabled }}
 
     - name: GitOps Update (Release only)
