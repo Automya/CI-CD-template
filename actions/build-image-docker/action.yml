@@ -59,6 +59,16 @@ inputs:
     description: "Google Chat Webhook URL for notifications"
     required: false
 
+  # Manual trigger (workflow_dispatch)
+  manual_branch:
+    description: "Branch to build (for workflow_dispatch trigger)"
+    required: false
+    default: ""
+  manual_tag:
+    description: "Docker image tag (for workflow_dispatch trigger, defaults to branch name)"
+    required: false
+    default: ""
+
   # Cache Configuration
   cache_enabled:
     description: "Enable Docker layer caching (uses GCP Artifact Registry)"
@@ -96,8 +106,8 @@ runs:
       with:
         event_name: ${{ github.event_name }}
         is_valid_command: ${{ steps.parse.outputs.is_valid }}
-        parsed_branch: ${{ steps.parse.outputs.branch }}
-        parsed_tag: ${{ steps.parse.outputs.tag }}
+        parsed_branch: ${{ steps.parse.outputs.branch || inputs.manual_branch }}
+        parsed_tag: ${{ steps.parse.outputs.tag || inputs.manual_tag }}
         github_token: ${{ env.GH_TOKEN }}
         allowed_tags: ${{ inputs.allowed_tags }}
         release_branch: ${{ inputs.release_branch }}

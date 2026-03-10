@@ -157,6 +157,16 @@ runs:
              fi
            fi
 
+        elif [[ "$EVENT" == "workflow_dispatch" ]]; then
+           if [[ -z "$PR_BRANCH" ]]; then
+             echo "::error::Branch is required for workflow_dispatch"
+             echo "status=error_branch_required" >> "$GITHUB_OUTPUT"
+             exit 0
+           fi
+           BRANCH="$PR_BRANCH"
+           SAFE_BRANCH=$(echo "$BRANCH" | tr '/' '-')
+           TAG="${PR_TAG:-$SAFE_BRANCH}"
+
         elif [[ "$EVENT" == "release" ]]; then
            TAG="${{ github.event.release.tag_name }}"
            BRANCH="${{ github.event.release.target_commitish }}"

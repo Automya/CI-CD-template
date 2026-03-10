@@ -43,6 +43,14 @@ inputs:
     description: "Branch allowed for release events (default: main)"
     required: false
     default: "main"
+  manual_branch:
+    description: "Branch to build (for workflow_dispatch trigger)"
+    required: false
+    default: ""
+  manual_tag:
+    description: "Docker image tag (for workflow_dispatch trigger, defaults to branch name)"
+    required: false
+    default: ""
 
 runs:
   using: "composite"
@@ -60,6 +68,8 @@ runs:
         cache_enabled: ${{ inputs.cache_enabled }}
         resource_type: ${{ inputs.resource_type }}
         release_branch: ${{ inputs.release_branch }}
+        manual_branch: ${{ inputs.manual_branch }}
+        manual_tag: ${{ inputs.manual_tag }}
         build_args: |
           MAVEN_USERNAME=${{ env.MAVEN_USERNAME }}
           MAVEN_PASSWORD=${{ env.MAVEN_PASSWORD }}
