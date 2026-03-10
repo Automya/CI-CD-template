@@ -64,6 +64,34 @@ runs:
         LOGICAL_STATUS=""
         JOB_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
+        # Tag validation functions (shared by issue_comment and workflow_dispatch)
+        is_semver() { [[ "$1" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; }
+
+        is_semver_allowed() {
+          if [[ "$BRANCH" == "main" ]]; then return 0; fi
+          local branch_upper=$(echo "$BRANCH" | tr '[:lower:]' '[:upper:]')
+          if [[ "$branch_upper" == "DEV" ]]; then
+            if [[ -n "$ALLOWED_TAGS" ]]; then
+              local allowed_upper=$(echo "$ALLOWED_TAGS" | tr '[:lower:]' '[:upper:]')
+              [[ "$allowed_upper" =~ (^|,)SEMVER(,|$) ]] && return 0
+            fi
+          fi
+          return 1
+        }
+
+        is_allowed_tag() {
+          local tag_upper=$(echo "$1" | tr '[:lower:]' '[:upper:]')
+          if [[ "$tag_upper" == "MAIN" ]]; then return 0; fi
+          if [[ -n "$ALLOWED_TAGS" ]]; then
+            IFS=',' read -ra TAGS <<< "$ALLOWED_TAGS"
+            for allowed_tag in "${TAGS[@]}"; do
+              allowed_tag_upper=$(echo "$allowed_tag" | tr '[:lower:]' '[:upper:]' | xargs)
+              if [[ "$tag_upper" == "$allowed_tag_upper" ]]; then return 0; fi
+            done
+          fi
+          return 1
+        }
+
         if [[ "$EVENT" == "issue_comment" ]]; then
            if [[ "$IS_VALID" != "true" ]]; then
               echo "status=not_build_command" >> "$GITHUB_OUTPUT"
@@ -81,10 +109,8 @@ runs:
 
            # If still no branch (issue comment without -b flag), use default branch
            if [ -z "$BRANCH" ] || [ "$BRANCH" == "null" ]; then
-             # Check if this is a PR or an issue
              IS_PR=$(jq -r '.issue.pull_request // empty' < "$GITHUB_EVENT_PATH")
              if [ -z "$IS_PR" ]; then
-               # This is an issue comment, branch must be specified with -b flag
                echo "::error::Branch must be specified with -b flag for issue comments (e.g., 'build -b main')"
                echo "status=error_branch_required" >> "$GITHUB_OUTPUT"
                exit 0
@@ -94,68 +120,9 @@ runs:
                exit 0
              fi
            fi
-           
+
            SAFE_BRANCH=$(echo "$BRANCH" | tr '/' '-')
            TAG="${PR_TAG:-$SAFE_BRANCH}"
-           
-           # Validation logic
-           is_semver() { [[ "$1" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; }
-
-           # Check if SEMVER is allowed for current branch
-           # SEMVER is allowed on main (always) and DEV branch (when SEMVER in allowed_tags)
-           is_semver_allowed() {
-             # Always allow semver on main branch
-             if [[ "$BRANCH" == "main" ]]; then
-               return 0
-             fi
-
-             # For DEV branch, check if SEMVER is in allowed_tags
-             local branch_upper=$(echo "$BRANCH" | tr '[:lower:]' '[:upper:]')
-             if [[ "$branch_upper" == "DEV" ]]; then
-               if [[ -n "$ALLOWED_TAGS" ]]; then
-                 local allowed_upper=$(echo "$ALLOWED_TAGS" | tr '[:lower:]' '[:upper:]')
-                 [[ "$allowed_upper" =~ (^|,)SEMVER(,|$) ]] && return 0
-               fi
-             fi
-
-             return 1
-           }
-
-           # Check if tag is in allowed list (case-insensitive)
-           is_allowed_tag() {
-             local tag_upper=$(echo "$1" | tr '[:lower:]' '[:upper:]')
-             # Always allow MAIN/main
-             if [[ "$tag_upper" == "MAIN" ]]; then return 0; fi
-             # Check additional allowed tags
-             if [[ -n "$ALLOWED_TAGS" ]]; then
-               IFS=',' read -ra TAGS <<< "$ALLOWED_TAGS"
-               for allowed_tag in "${TAGS[@]}"; do
-                 allowed_tag_upper=$(echo "$allowed_tag" | tr '[:lower:]' '[:upper:]' | xargs)
-                 if [[ "$tag_upper" == "$allowed_tag_upper" ]]; then return 0; fi
-               done
-             fi
-             return 1
-           }
-
-           if [[ "$BRANCH" == "main" && -n "$PR_TAG" ]]; then
-             # If tag is "main" (case-insensitive), allow it
-             PR_TAG_UPPER=$(echo "$PR_TAG" | tr '[:lower:]' '[:upper:]')
-             if [[ "$PR_TAG_UPPER" != "MAIN" ]]; then
-               # For other tags, must be semver or in allowed list
-               if ! is_allowed_tag "$PR_TAG" && ! is_semver "$PR_TAG"; then
-                 LOGICAL_STATUS="invalid_tag_main"
-               fi
-             fi
-           elif [[ "$BRANCH" != "main" && -n "$PR_TAG" ]]; then
-             # For non-main branches, only restrict semver tags
-             # Semver tags require explicit permission (SEMVER in allowed_tags for DEV branch)
-             # Non-semver tags are always allowed (branch names, feature tags, etc.)
-             if is_semver "$PR_TAG"; then
-               if ! is_semver_allowed && ! is_allowed_tag "$PR_TAG"; then
-                 LOGICAL_STATUS="invalid_tag_branch"
-               fi
-             fi
-           fi
 
         elif [[ "$EVENT" == "workflow_dispatch" ]]; then
            if [[ -z "$PR_BRANCH" ]]; then
@@ -173,6 +140,24 @@ runs:
            if [[ "$BRANCH" != "$RELEASE_BRANCH" ]]; then LOGICAL_STATUS="invalid_release_branch"; fi
         else
            LOGICAL_STATUS="not_supported_event"
+        fi
+
+        # Tag validation (applies to issue_comment and workflow_dispatch)
+        if [[ "$EVENT" == "issue_comment" || "$EVENT" == "workflow_dispatch" ]] && [[ -z "$LOGICAL_STATUS" ]]; then
+          if [[ "$BRANCH" == "main" && -n "$PR_TAG" ]]; then
+            PR_TAG_UPPER=$(echo "$PR_TAG" | tr '[:lower:]' '[:upper:]')
+            if [[ "$PR_TAG_UPPER" != "MAIN" ]]; then
+              if ! is_allowed_tag "$PR_TAG" && ! is_semver "$PR_TAG"; then
+                LOGICAL_STATUS="invalid_tag_main"
+              fi
+            fi
+          elif [[ "$BRANCH" != "main" && -n "$PR_TAG" ]]; then
+            if is_semver "$PR_TAG"; then
+              if ! is_semver_allowed && ! is_allowed_tag "$PR_TAG"; then
+                LOGICAL_STATUS="invalid_tag_branch"
+              fi
+            fi
+          fi
         fi
 
         echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"

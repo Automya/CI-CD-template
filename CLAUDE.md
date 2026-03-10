@@ -23,7 +23,7 @@ The docker build actions follow a composition pattern:
 
 ### Key Workflows
 
-1. **Build Flow**: PR comment triggers (`build -b <branch> -t <tag>`) → parse comment → checkout → GCP auth → Docker build/push → notify
+1. **Build Flow**: PR comment triggers (`build -b <branch> -t <tag>`) or `workflow_dispatch` (manual trigger with branch/tag inputs) → parse comment → checkout → GCP auth → Docker build/push → notify
 2. **Deploy Flow**: PR comment triggers (`deploy -t <tag> -e <env> [-r <deployment|cronjob>]`) → parse → GitOps PR → K8s rollout restart (skipped for CronJobs) → notify
 3. **Sync Config Flow**: PR comment triggers (`sync -b <branch> -e <env>`) → update ConfigMap in GitOps repo → create PR
 
@@ -44,8 +44,8 @@ GCP credentials are NOT hardcoded. Consuming workflows must provide:
 
 | Action | Purpose |
 |--------|---------|
-| `build-image-docker` | Base Docker build action with full configuration. Supports `resource_type` input for CronJob GitOps updates on release. Supports `release_branch` input (default: `main`) for repos where the main branch is not `main` |
-| `build-image-docker-gcp` | Docker build with GitOps integration (wrapper). Passes `resource_type` and `release_branch` to base |
+| `build-image-docker` | Base Docker build action with full configuration. Supports `resource_type` input for CronJob GitOps updates on release. Supports `release_branch` input (default: `main`) for repos where the main branch is not `main`. Supports `manual_branch`/`manual_tag` inputs for `workflow_dispatch` triggers |
+| `build-image-docker-gcp` | Docker build with GitOps integration (wrapper). Passes `resource_type`, `release_branch`, `manual_branch`, and `manual_tag` to base |
 | `build-image-docker-no-repo` | Docker build without GitOps (wrapper). Passes `resource_type` and `release_branch` to base |
 | `build-image-docker-automya-front` | Frontend build with DEV tag restriction (wrapper). Passes `resource_type` and `release_branch` to base |
 | `deploy-app` | GitOps deployment with K8s rollout restart. Supports Deployments (default) and CronJobs via `-r cronjob` flag |
@@ -60,7 +60,7 @@ GCP credentials are NOT hardcoded. Consuming workflows must provide:
 
 | Action | Purpose |
 |--------|---------|
-| `build-context-determine` | Determine build context (branch, tag, event type) |
+| `build-context-determine` | Determine build context (branch, tag, event type). Supports `issue_comment`, `release`, and `workflow_dispatch` events |
 | `build-report-message` | Generate build report messages |
 | `create-pr` | Generic PR creation with auto-merge |
 | `deploy-context-init` | Initialize deployment context |
