@@ -46,8 +46,8 @@ GCP credentials are NOT hardcoded. Consuming workflows must provide:
 |--------|---------|
 | `build-image-docker` | Base Docker build action with full configuration. Supports `resource_type` input for CronJob GitOps updates on release. Supports `release_branch` input (default: `main`) for repos where the main branch is not `main`. Supports `manual_branch`/`manual_tag` inputs for `workflow_dispatch` triggers |
 | `build-image-docker-gcp` | Docker build with GitOps integration (wrapper). Passes `resource_type`, `release_branch`, `manual_branch`, and `manual_tag` to base |
-| `build-image-docker-no-repo` | Docker build without GitOps (wrapper). Passes `resource_type` and `release_branch` to base |
-| `build-image-docker-automya-front` | Frontend build with DEV tag restriction (wrapper). Passes `resource_type` and `release_branch` to base |
+| `build-image-docker-no-repo` | Docker build without GitOps (wrapper). Passes `resource_type`, `release_branch`, `manual_branch`, and `manual_tag` to base |
+| `build-image-docker-automya-front` | Frontend build with DEV tag restriction (wrapper). Passes `resource_type`, `release_branch`, `manual_branch`, and `manual_tag` to base |
 | `deploy-app` | GitOps deployment with K8s rollout restart. Supports Deployments (default) and CronJobs via `-r cronjob` flag |
 | `sync-config` | Sync config files to GitOps ConfigMaps |
 | `java-test` | Run Gradle tests |
